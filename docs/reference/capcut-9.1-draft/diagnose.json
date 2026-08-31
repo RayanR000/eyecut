@@ -1,0 +1,141 @@
+{
+  "ok": true,
+  "project_dir": "<project>",
+  "canonical": "template-2.tmp",
+  "version": "9.1.0",
+  "modern_storage": true,
+  "diverged": false,
+  "layout": "info-primary",
+  "nested_timelines": [
+    "Timelines/project.json",
+    "Timelines/797B3727-6267-4B64-8D5F-0B41780A1977/draft_info.json"
+  ],
+  "write_guard": "ok",
+  "editor_running": [],
+  "candidates": [
+    {
+      "file": "draft_content.json",
+      "exists": false,
+      "size": 0,
+      "mtime": null,
+      "sha256": null,
+      "parseable_timeline": false,
+      "envelope": "root",
+      "timeline_hash": null,
+      "app_version": null
+    },
+    {
+      "file": "draft_info.json",
+      "exists": true,
+      "size": 32390,
+      "mtime": "2026-08-30T05:18:31.490Z",
+      "sha256": "5af1bfcdde0b49110c254086261d0ec979354145086aba0967cf9b1ca5a0832c",
+      "parseable_timeline": true,
+      "envelope": "root",
+      "timeline_hash": "07fa26c1499805d9997e17bd7b91c4a0a0f40f9cbbbbaa062721c11a57a2cc77",
+      "tracks": 3,
+      "segments": 5,
+      "app_version": "9.1.0"
+    },
+    {
+      "file": "draft_meta_info.json",
+      "exists": true,
+      "size": 2954,
+      "mtime": "2026-08-30T05:45:51.089Z",
+      "sha256": "853bbc8c13a27f07630c864a0bbbc8f5d2ceb43c587cdf30dfa71c9217a98d05",
+      "parseable_timeline": false,
+      "envelope": "root",
+      "timeline_hash": null,
+      "app_version": null,
+      "error": "JSON file does not contain a recognizable timeline"
+    },
+    {
+      "file": "template-2.tmp",
+      "exists": true,
+      "size": 32390,
+      "mtime": "2026-08-30T05:18:31.490Z",
+      "sha256": "5af1bfcdde0b49110c254086261d0ec979354145086aba0967cf9b1ca5a0832c",
+      "parseable_timeline": true,
+      "envelope": "root",
+      "timeline_hash": "07fa26c1499805d9997e17bd7b91c4a0a0f40f9cbbbbaa062721c11a57a2cc77",
+      "tracks": 3,
+      "segments": 5,
+      "app_version": "9.1.0"
+    }
+  ],
+  "next_actions": [
+    "No draft_content.json: the timeline lives in draft_info.json (draft_info-primary layout, reported as the primary project file on newer Mac builds). Edit commands, register, and sync-timelines treat it as canonical, but round-trip evidence for this layout is synthetic-only — if this project opens fine in your app, contribute a bundle: `capcut fixture <project> --out <dir>`.",
+    "Timelines/ directory with a nested timeline document, on CapCut >= 8.7 storage. No discard risk is claimed here and none is ruled out: the 7.x report in issue #50 and the 8.5.0 open/close round trip in issue #68 both predate this storage generation, so what the app does with the nested document on >= 8.7 is unevidenced in either direction. Edit commands read and write the project-root files only; `capcut sync-timelines <project> --nested --apply` copies the root timeline into the nested documents as an explicit opt-in repair. If this project opens in your app with a CLI edit intact — or without it — that is the artifact issue #50 has been blocked on: `capcut fixture <project> --out <dir>`."
+  ],
+  "nested_evidence": {
+    "issue": "https://github.com/renezander030/capcut-cli/issues/50",
+    "note": "Nested Timelines/ layout evidence for issue #50, captured read-only: the redacted Timelines/project.json pointer, the draft/template/project file tree with sizes and mtimes, the app version and OS marker the draft carries, and a root-vs-nested content comparison (counts and hashes only). To produce the deciding before/after: run an edit command that reports success, then run `capcut diagnose <project> --bundle <report.json>` again and compare the nested document's hashes.",
+    "app_version": "9.1.0",
+    "os": "mac",
+    "timelines_project_json": "{\"config\":{\"color_space\":-1,\"mixed_track_mode_on\":false,\"render_index_track_mode_on\":false,\"use_float_render\":false},\"create_time\":1788062722017208,\"id\":\"D65D78DE-6D01-4F60-8E16-9C9BE0A3BFB9\",\"main_timeline_id\":\"797B3727-6267-4B64-8D5F-0B41780A1977\",\"timelines\":[{\"create_time\":1788062722017208,\"id\":\"797B3727-6267-4B64-8D5F-0B41780A1977\",\"is_marked_delete\":false,\"name\":\"Timeline 01\",\"update_time\":1788062722017208}],\"update_time\":1788062722017208,\"version\":0}",
+    "redaction_kinds": {},
+    "file_tree": [
+      {
+        "path": "Timelines/797B3727-6267-4B64-8D5F-0B41780A1977/draft_info.json",
+        "size": 32390,
+        "mtime": "2026-08-30T05:18:31.489Z"
+      },
+      {
+        "path": "Timelines/797B3727-6267-4B64-8D5F-0B41780A1977/template-2.tmp",
+        "size": 32390,
+        "mtime": "2026-08-30T05:18:31.489Z"
+      },
+      {
+        "path": "Timelines/project.json",
+        "size": 461,
+        "mtime": "2026-08-30T04:49:34.406Z"
+      },
+      {
+        "path": "draft_agency_config.json",
+        "size": 154,
+        "mtime": "2026-08-30T04:05:21.582Z"
+      },
+      {
+        "path": "draft_biz_config.json",
+        "size": 206,
+        "mtime": "2026-08-30T05:06:21.186Z"
+      },
+      {
+        "path": "draft_info.json",
+        "size": 32390,
+        "mtime": "2026-08-30T05:18:31.490Z"
+      },
+      {
+        "path": "draft_meta_info.json",
+        "size": 2954,
+        "mtime": "2026-08-30T05:45:51.089Z"
+      },
+      {
+        "path": "draft_virtual_store.json",
+        "size": 489,
+        "mtime": "2026-08-30T05:01:37.218Z"
+      },
+      {
+        "path": "template-2.tmp",
+        "size": 32390,
+        "mtime": "2026-08-30T05:18:31.490Z"
+      }
+    ],
+    "root_vs_nested": [
+      {
+        "root_file": "template-2.tmp",
+        "nested_file": "Timelines/797B3727-6267-4B64-8D5F-0B41780A1977/draft_info.json",
+        "identical": true,
+        "root_sha256": "5af1bfcdde0b49110c254086261d0ec979354145086aba0967cf9b1ca5a0832c",
+        "nested_sha256": "5af1bfcdde0b49110c254086261d0ec979354145086aba0967cf9b1ca5a0832c",
+        "root_timeline_hash": "07fa26c1499805d9997e17bd7b91c4a0a0f40f9cbbbbaa062721c11a57a2cc77",
+        "nested_timeline_hash": "07fa26c1499805d9997e17bd7b91c4a0a0f40f9cbbbbaa062721c11a57a2cc77",
+        "mtime_newer": null,
+        "root_mtime": "2026-08-30T05:18:31.490Z",
+        "nested_mtime": "2026-08-30T05:18:31.489Z",
+        "track_deltas": [],
+        "verdict": "The nested document and the root template-2.tmp carry the same timeline. Capture this again immediately after a CLI write reports success — if they still match, no root-mirror discard can be shown from this project."
+      }
+    ]
+  }
+}

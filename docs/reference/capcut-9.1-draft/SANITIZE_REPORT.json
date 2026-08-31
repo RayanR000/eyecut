@@ -1,0 +1,56 @@
+{
+ "ok": true,
+ "source_dir": "/Users/USER/Movies/CapCut/User Data/Projects/com.lveditor.draft/0830",
+ "out_dir": "<redacted>",
+ "version": "9.1.0",
+ "modern_storage": true,
+ "files": [
+  {
+   "file": "draft_info.json",
+   "bytes_in": 32390,
+   "bytes_out": 32173,
+   "redactions": 11
+  },
+  {
+   "file": "draft_meta_info.json",
+   "bytes_in": 2954,
+   "bytes_out": 2934,
+   "redactions": 4
+  },
+  {
+   "file": "template-2.tmp",
+   "bytes_in": 32390,
+   "bytes_out": 32173,
+   "redactions": 11
+  },
+  {
+   "file": "Timelines/project.json",
+   "bytes_in": 461,
+   "bytes_out": 461,
+   "redactions": 0
+  },
+  {
+   "file": "Timelines/797B3727-6267-4B64-8D5F-0B41780A1977/draft_info.json",
+   "bytes_in": 32390,
+   "bytes_out": 32173,
+   "redactions": 11
+  }
+ ],
+ "redaction_kinds": {
+  "macos_user": 20,
+  "device_ids": 18
+ },
+ "media_excluded": true,
+ "mask_keyframe_evidence": {
+  "verdict": "no-mask-keyframe-evidence",
+  "masks_found": 0,
+  "unknown_property_types_on_masked_segments": []
+ },
+ "notes": [
+  "Binary media under assets/ was intentionally excluded \u2014 only timeline JSON files are bundled.",
+  "User home paths, email addresses and device identifiers (device_id, mac_address, hard_disk_id) were redacted; review the files before sharing.",
+  "Attach this folder to issue #35 (or a new issue) to move the version toward fixture-tested.",
+  "mask-keyframe-report.json maps the draft's mask + keyframe structures \u2014 the #44 harvest (the mask-geometry keyframe encoding has no public ground truth).",
+  "The nested Timelines/ layout was captured (Timelines/project.json + nested timeline documents) \u2014 attach this bundle to issue #50, which is blocked on exactly this artifact."
+ ]
+}

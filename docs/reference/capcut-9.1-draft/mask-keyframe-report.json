@@ -1,0 +1,66 @@
+{
+  "issue": "https://github.com/renezander030/capcut-cli/issues/44",
+  "looking_for": [
+    "property_type identifiers for mask geometry (a KFTypeMask* family?) in segment.common_keyframes",
+    "OR a keyframe container inside the mask material entry itself (masks/common_mask/common_masks)",
+    "from a draft where the desktop app itself animated a mask — no such capture exists publicly yet"
+  ],
+  "verdict": "no-mask-keyframe-evidence",
+  "summary": {
+    "verdict": "no-mask-keyframe-evidence",
+    "masks_found": 0,
+    "unknown_property_types_on_masked_segments": []
+  },
+  "files": [
+    {
+      "file": "draft_info.json",
+      "parsed": true,
+      "masks": [],
+      "property_types": {
+        "known": [],
+        "unknown": []
+      },
+      "segments_with_mask_and_keyframes": []
+    },
+    {
+      "file": "draft_meta_info.json",
+      "parsed": true,
+      "masks": [],
+      "property_types": {
+        "known": [],
+        "unknown": []
+      },
+      "segments_with_mask_and_keyframes": []
+    },
+    {
+      "file": "template-2.tmp",
+      "parsed": true,
+      "masks": [],
+      "property_types": {
+        "known": [],
+        "unknown": []
+      },
+      "segments_with_mask_and_keyframes": []
+    },
+    {
+      "file": "Timelines/project.json",
+      "parsed": true,
+      "masks": [],
+      "property_types": {
+        "known": [],
+        "unknown": []
+      },
+      "segments_with_mask_and_keyframes": []
+    },
+    {
+      "file": "Timelines/797B3727-6267-4B64-8D5F-0B41780A1977/draft_info.json",
+      "parsed": true,
+      "masks": [],
+      "property_types": {
+        "known": [],
+        "unknown": []
+      },
+      "segments_with_mask_and_keyframes": []
+    }
+  ]
+}

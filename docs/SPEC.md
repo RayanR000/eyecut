@@ -109,11 +109,21 @@ of 345 effects it is, is guesswork. Imitate the feel, not the project.
 ### 5. `build` — write the project
 
 - Delegate draft writing to `capcut-cli compile` (JSON spec in, draft out)
-- **Register media in `draft_meta_info.json` → `draft_materials`**, or CapCut 9.x
-  prompts to relink every clip. Entry shape captured from a CapCut-authored draft;
-  note `file_Path` (capital P), `metetype` (misspelled), microsecond durations
-  **[proven]** — this is the piece no other generator has
-- Register the project in `root_meta_info.json` or it never appears in the UI **[proven]**
+- **Register media in `draft_meta_info.json` → `draft_materials`. eyecut writes this
+  itself — it is not delegated.** Without it CapCut 9.x prompts to relink every clip.
+  Entry shape captured from a CapCut-authored draft; note `file_Path` (capital P),
+  `metetype` (misspelled), microsecond durations **[proven]**.
+  This is the piece no other generator has, verified 2026-08-31 against both
+  candidates: `capcut-cli` 0.21.1 puts the write **deliberately out of scope** for want
+  of a captured entry shape (`dist/store.js`, `assessMediaRegistrationRaw`) and only
+  observes the three empty states via `diagnose`/`lint`; VectCutAPI ships a template
+  with every `draft_materials` group empty and no code that ever populates it.
+  Upstream asks for the artifact we already have — `capcut fixture <project> --out <dir>`
+  on a CapCut-authored draft is the evidence bundle a registration write is built from,
+  and contributing it could move this step out of eyecut entirely.
+- Register the project in `root_meta_info.json` or it never appears in the UI **[proven]**.
+  `capcut-cli` covers this (adds the entry, creates the file if absent, never rewrites
+  the whole index), so delegate it.
 - **Refuse to write while CapCut is running** — it caches both files in memory and
   overwrites on quit **[proven]**
 - Preview via `capcut-cli render` so the user judges without opening CapCut **[untested]**

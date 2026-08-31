@@ -1,0 +1,85 @@
+{
+  "_source": "Captured from CapCut International 9.x on macOS. Projects '0830' (video + music) and '0824' (photo), both authored in the CapCut app. Paths, filenames and material ids replaced with placeholders; every other field is verbatim as CapCut wrote it.",
+  "_captured": "2026-08-31",
+  "_groups": "In draft_meta_info.json these live under draft_materials as [{type: 0, value: [...]}, {type: 1, value: []}, ...]. All real entries observed sat in the type-0 group regardless of metetype; groups 1,2,3,6,7 were always empty.",
+  "entries": [
+    {
+      "ai_group_type": "",
+      "create_time": 1788066092,
+      "duration": 405333000,
+      "enter_from": 0,
+      "extra_info": "source_1080p.mp4",
+      "file_Path": "/Users/example/Footage/source_1080p.mp4",
+      "height": 1080,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "import_time": 1788066099,
+      "import_time_ms": 1788066097201391,
+      "item_source": 1,
+      "material_color_tag": "",
+      "md5": "",
+      "metetype": "video",
+      "roughcut_time_range": {
+        "duration": 405333000,
+        "start": 0
+      },
+      "sub_time_range": {
+        "duration": -1,
+        "start": -1
+      },
+      "type": 0,
+      "width": 1920
+    },
+    {
+      "ai_group_type": "",
+      "create_time": 1788065320,
+      "duration": 196519000,
+      "enter_from": 0,
+      "extra_info": "track.mp3",
+      "file_Path": "/Users/example/Music/track.mp3",
+      "height": 0,
+      "id": "00000000-0000-4000-8000-000000000002",
+      "import_time": 1788065374,
+      "import_time_ms": 1788065373089044,
+      "item_source": 1,
+      "material_color_tag": "",
+      "md5": "",
+      "metetype": "music",
+      "roughcut_time_range": {
+        "duration": 196519000,
+        "start": 0
+      },
+      "sub_time_range": {
+        "duration": -1,
+        "start": -1
+      },
+      "type": 0,
+      "width": 0
+    },
+    {
+      "ai_group_type": "",
+      "create_time": 1787630112,
+      "duration": 5000000,
+      "enter_from": 0,
+      "extra_info": "still.jpeg",
+      "file_Path": "/Users/example/Pictures/still.jpeg",
+      "height": 524,
+      "id": "00000000-0000-4000-8000-000000000003",
+      "import_time": 1787630122,
+      "import_time_ms": 1787630121446164,
+      "item_source": 1,
+      "material_color_tag": "",
+      "md5": "",
+      "metetype": "photo",
+      "roughcut_time_range": {
+        "duration": -1,
+        "start": -1
+      },
+      "sub_time_range": {
+        "duration": -1,
+        "start": -1
+      },
+      "type": 0,
+      "width": 736
+    }
+  ]
+}
