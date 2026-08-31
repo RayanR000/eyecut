@@ -1,0 +1,16 @@
+[project]
+name = "eyecut"
+version = "0.1.0"
+description = "CapCut support for Claude: Claude does the editing, eyecut writes the files."
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.0"]
+
+[project.scripts]
+eyecut = "eyecut.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["eyecut"]
