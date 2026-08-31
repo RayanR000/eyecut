@@ -54,6 +54,41 @@ Each stage writes JSON and can run alone. That matters for iteration: re-running
 Split into scenes, then look at them.
 
 - `ffmpeg scdet` for scene boundaries **[proven]** — 176 cuts from a 405s source
+- **The threshold cannot be derived from the score distribution** — tried 2026-08-31
+  on Sintel and Tears of Steel, and it fails **[proven failure]**. `scdet` scores
+  visual dissimilarity, not cuts: a well-matched cut (same palette, motion carried
+  across it) scores low, a whip pan inside one shot scores high, and no threshold
+  separates them. A 49s span showed a clean 2.8 → 1.8 break, but that was
+  small-sample noise; over a full film (17,620 frames, 921 candidates above 1.0)
+  the distribution runs smooth from 36.6 down to 1.0 with no gap at all, and
+  gap-hunting locked onto the sparse top of the range and *under*-detected —
+  95 shots against 106 from a plain fixed threshold.
+- **Run permissive and let over-segmentation happen** — threshold 3.0, ~22 cuts/min,
+  with each boundary keeping its score and a high/medium/low confidence. The error
+  costs are asymmetric: splitting one shot in two is nearly free, since both halves
+  describe the same content, while a missed cut leaves a 48s "shot" whose 3 sampled
+  frames misrepresent most of its own span. Merging neighbours the vision model
+  describes identically is the cheap correction.
+- **Cluster boundaries, don't threshold frame-by-frame.** One cut trips `scdet` on
+  2+ adjacent frames and a dissolve trips it across many, so raw qualifying frames
+  overcount badly — 326 of them for 215 shots on Sintel, with the surplus silently
+  swallowed by the minimum-shot-length filter. Collapse each run to its peak-scoring
+  frame and **keep the run's width and shape**. That width is the same frame-diff
+  signal `profile` uses to count dissolves, so `scan` produces it for free.
+- **`scdet` scores cannot detect dissolves at all** **[proven failure]**, in three
+  stages. Width alone mislabelled 36.3-scoring hard cuts as dissolves (fast motion
+  blurs a cut across extra frames). A shape rule requiring ≥6-frame runs could never
+  fire — the widest run above threshold is 4 frames in Sintel, 5 in Tears of Steel,
+  since a dissolve by definition changes little frame to frame. And the sustained
+  *sub*-threshold bands where dissolves must therefore live gave 10 and 12
+  candidates, of which both checked by eye were false positives: a slow push-in
+  through fog, and a credit crawl. The cause is structural — frame-to-frame
+  difference cannot separate "two images superimposed" from "one image moving
+  slowly". Detecting dissolves needs a different measurement entirely.
+- **Discard the first ~0.5s of boundary scores on a clip that was itself extracted
+  with `-ss`.** Seeking starts the decoder mid-GOP, so the opening frames score
+  spuriously high and invent boundaries — 4 of them in the first half-second of a
+  test extraction. Relevant because pre-cut clip packs are a normal input.
 - Sample **3 frames per shot**, not 1. A single frame says nothing about motion, and a
   midpoint sample landed on a black frame during the prototype **[proven failure]**
 - Tile frames into contact sheets (~35 per sheet) and read them with a vision model.
@@ -63,7 +98,11 @@ Split into scenes, then look at them.
   and watermarks cluster in the first and last seconds **[proven]** — all three were
   hit in one session
 
-Output per shot: `{start, end, description, subject, composition, lighting, readable_at_speed}`.
+Output per shot: `{start, end, description, subject, composition, lighting,
+readable_at_speed}`, plus what the detector knew about the boundary that opened it —
+`{boundary_score, boundary_kind, boundary_width_frames, boundary_confidence}`.
+`arrange` should prefer high-confidence boundaries when placing accents; a `low` one
+is as likely to be camera movement as an edit.
 
 ### 2. `profile` — read a reference edit
 
@@ -77,6 +116,11 @@ Extract a style recipe from a video the user likes. **[proven]** on a 21.6s refe
 | `black_point` / `white_point` | luma 5th/95th pct | 0.0 / 0.73 (crushed blacks) |
 | `push` | scale correlation, shot start vs end | 46% of shots, mean 1.085× |
 | `beat_discipline` | cuts vs beat grid | 93% on beat |
+
+`dissolve_ratio` still needs its own method — see stage 1's failures. `scdet` scores
+cannot yield it: a dissolve and a slow camera move produce the same sustained
+frame-to-frame difference. Whatever recovered 8 of 14 on the reference edit, it was
+not this signal, and that method should be re-derived before the field is trusted.
 
 Not recoverable: specific CapCut effect IDs. You can see a flash; identifying *which*
 of 345 effects it is, is guesswork. Imitate the feel, not the project.

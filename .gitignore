@@ -1,0 +1,5 @@
+# Source media — large, and not ours to redistribute. See footage/CREDITS.md.
+footage/
+scratch/
+__pycache__/
+*.pyc
