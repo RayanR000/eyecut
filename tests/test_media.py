@@ -9,7 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from eyecut.media import MediaProbe, entry_for, register_media
+from eyecut.media import (MediaProbe, entry_for, register_media,
+                         set_timeline_duration, timeline_duration_us)
+
+@pytest.fixture(autouse=True)
+def capcut_not_running(monkeypatch):
+    """Every write goes through the running-CapCut guard, so a real CapCut open on
+    the developer's machine failed the whole suite. Pin the guard; the one test
+    that asserts it re-patches it to True."""
+    monkeypatch.setattr("eyecut.media.capcut_is_running", lambda: False)
+
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "draft_materials_entries.json").read_text())
 BY_TYPE = {e["metetype"]: e for e in FIXTURE["entries"]}
@@ -135,3 +144,31 @@ def test_refuses_a_relative_path(tmp_path):
     meta_path = make_draft(tmp_path)
     with pytest.raises(ValueError, match="absolute"):
         register_media(meta_path, probes(("a.mp4", "video", 1920, 1080, 1)))
+
+
+def test_tm_duration_mirrors_the_timeline(tmp_path):
+    """CapCut lists a draft's length from tm_duration in the *meta* file, not from
+    draft_info.json. capcut-cli compile leaves it 0, which lists as 00:00."""
+    meta_path = make_draft(tmp_path)
+    (info := tmp_path / "draft_info.json").write_text(json.dumps({"duration": 9_500_000}))
+
+    set_timeline_duration(meta_path, timeline_duration_us(info))
+
+    assert json.loads(meta_path.read_text())["tm_duration"] == 9_500_000
+
+
+def test_tm_duration_refuses_float_seconds(tmp_path):
+    """Float seconds are the 1µs-phantom-overlap bug in a different costume."""
+    meta_path = make_draft(tmp_path)
+    with pytest.raises(ValueError, match="integer microseconds"):
+        set_timeline_duration(meta_path, 9.5)
+
+
+def test_tm_duration_refuses_to_write_while_capcut_is_running(tmp_path, monkeypatch):
+    monkeypatch.setattr("eyecut.media.capcut_is_running", lambda: True)
+    meta_path = make_draft(tmp_path)
+    before = meta_path.read_text()
+
+    with pytest.raises(RuntimeError, match="CapCut is running"):
+        set_timeline_duration(meta_path, 9_500_000)
+    assert meta_path.read_text() == before

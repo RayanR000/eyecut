@@ -139,6 +139,46 @@ def _groups(meta: dict) -> list[dict]:
     return ordered
 
 
+def _write_meta(meta_path: Path, meta: dict) -> Path:
+    """Back up, then replace `meta_path` atomically. Returns the backup path.
+
+    Copy, never move — nothing is ever deleted. `os.replace` is atomic only
+    within one directory, so the temp file is a sibling.
+    """
+    backup = meta_path.with_suffix(".json.bak")
+    shutil.copy2(meta_path, backup)
+    tmp = meta_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(meta, indent=4, ensure_ascii=False) + "\n")
+    os.replace(tmp, meta_path)
+    return backup
+
+
+def timeline_duration_us(draft_info_path: Path | str) -> int:
+    """The timeline duration capcut-cli wrote, as integer microseconds."""
+    return int(json.loads(Path(draft_info_path).read_text())["duration"])
+
+
+def set_timeline_duration(meta_path: Path | str, duration_us: int) -> Path:
+    """Mirror the timeline duration into `draft_meta_info.json` → `tm_duration`.
+
+    CapCut's project list reads the duration from the *meta* file, not from
+    draft_info.json. `capcut-cli compile` writes the timeline but leaves
+    tm_duration at 0, and a 0 there is what lists a generated draft as 00:00
+    — the symptom usually blamed on a stale bundled template. It is not the
+    template: a draft compiled from a captured CapCut 9.1 template lists as
+    00:00 just the same until this field is set [proven].
+    """
+    meta_path = Path(meta_path)
+    if not isinstance(duration_us, int) or isinstance(duration_us, bool):
+        raise ValueError(f"duration must be integer microseconds, got {duration_us!r}")
+    if capcut_is_running():
+        raise RuntimeError("CapCut is running — it overwrites draft_meta_info.json on quit. "
+                           "Quit CapCut and re-run.")
+    meta = json.loads(meta_path.read_text())
+    meta["tm_duration"] = duration_us
+    return _write_meta(meta_path, meta)
+
+
 def register_media(meta_path: Path | str, probes: list[MediaProbe]) -> Registration:
     """Add entries for `probes` to a draft's draft_meta_info.json.
 
@@ -168,13 +208,7 @@ def register_media(meta_path: Path | str, probes: list[MediaProbe]) -> Registrat
         known.add(path_str)
         result.added.append(path_str)
 
-    backup = meta_path.with_suffix(".json.bak")
-    shutil.copy2(meta_path, backup)          # copy, never move — nothing is ever deleted
-    result.backup = backup
-
-    tmp = meta_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(meta, indent=4, ensure_ascii=False) + "\n")
-    os.replace(tmp, meta_path)               # atomic within the same directory
+    result.backup = _write_meta(meta_path, meta)
     return result
 
 
