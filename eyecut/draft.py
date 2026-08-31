@@ -50,13 +50,22 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
         raise RuntimeError("CapCut is running — it overwrites draft_meta_info.json on quit. "
                            "Quit CapCut and re-run.")
 
-    spec_path = project_dir.parent / f".{project_dir.name}.spec.json"
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    store = project_dir.parent
+    spec_path = store / f".{project_dir.name}.spec.json"
+    store.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(spec, ensure_ascii=False))
-    code, stderr = runner(["capcut", "compile", "--spec", str(spec_path),
-                           "--out", str(project_dir)], project_dir)
+    code, stderr = runner(["capcut", "compile", str(spec_path), "--out", str(project_dir)], store)
     if code != 0:
         raise CompileError(f"capcut compile failed ({code}): {stderr.strip()}")
+
+    # `capcut register` writes the store entry that makes the draft appear in
+    # CapCut's project list, and rewrites the sidecar to do it -- so it runs
+    # *before* register_media. It preserves draft_materials, but only because it
+    # never sees them here [verified against 0.21.1].
+    code, stderr = runner(["capcut", "register", str(project_dir),
+                           "--apply", "--drafts", str(store)], store)
+    if code != 0:
+        raise CompileError(f"capcut register failed ({code}): {stderr.strip()}")
 
     meta_path = project_dir / "draft_meta_info.json"
     registration = register_media(meta_path, probes)
