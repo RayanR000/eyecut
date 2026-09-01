@@ -54,13 +54,39 @@ MASK_OPTIONS = {"centerX": "--center-x", "centerY": "--center-y", "size": "--siz
                 "rectWidth": "--rect-width", "roundCorner": "--round-corner"}
 MASK_FLAGS = ("invert",)
 
+# `capcut text-style` option names, keyed by the spec key that carries them. The
+# standalone command is the whole reason `textStyle` is an item key: the compile
+# OPERATION of the same name crashes (see BROKEN_UPSTREAM), while the command it
+# wraps applies the identical border and shadow to a built segment and reports
+# `{"ok":true,"applied":["shadow","border"]}` [proven against 0.21.1].
+TEXT_STYLE_OPTIONS = {
+    "alpha": "--alpha", "fixedWidth": "--fixed-width", "fixedHeight": "--fixed-height",
+    "shadowAlpha": "--shadow-alpha", "shadowAngle": "--shadow-angle",
+    "shadowColor": "--shadow-color", "shadowDistance": "--shadow-distance",
+    "shadowSmoothing": "--shadow-smoothing",
+    "borderWidth": "--border-width", "borderColor": "--border-color",
+    "borderAlpha": "--border-alpha",
+    "bgColor": "--bg-color", "bgAlpha": "--bg-alpha", "bgStyle": "--bg-style",
+    "bgRoundRadius": "--bg-round-radius", "bgWidth": "--bg-width",
+    "bgHeight": "--bg-height", "bgHOffset": "--bg-h-offset", "bgVOffset": "--bg-v-offset",
+    "preset": "--preset"}
+TEXT_STYLE_FLAGS = ("shadow", "vertical")
+# these take a "#RRGGBB" string; everything else in OPTIONS is a number
+TEXT_STYLE_COLORS = ("shadowColor", "borderColor", "bgColor")
+# a make-preset file, so it is a path and gets the absolute-path rule
+TEXT_STYLE_PATHS = ("preset",)
+
 # `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
 # "Cannot read properties of undefined (reading 'alpha')". Refused here with an
-# explanation rather than passed through to crash. Drop this when upstream fixes
-# it -- the test that pins it says the same.
+# explanation rather than passed through to crash. Only the compile OPERATION is
+# broken, so the fix is not to do without: the `textStyle` item key above applies
+# the same styling afterwards. Drop this when upstream fixes it -- the test that
+# pins it says the same.
 BROKEN_UPSTREAM = {"text-style": "capcut-cli 0.21.1 crashes on it "
                                  "(\"Cannot read properties of undefined (reading 'alpha')\"). "
-                                 "Set the look on the text item instead: fontSize, color."}
+                                 "Set `textStyle` on the text item instead — the same "
+                                 "shadow, border and background box, applied after the "
+                                 "compile with the `capcut text-style` command, which works."}
 
 
 def _items(spec: dict) -> list[tuple[dict, dict]]:
@@ -194,6 +220,39 @@ def _check_span(op: dict, where: str) -> None:
                         f"what the CapCut UI can express.")
 
 
+def _check_text_style(style: Any, track_type: str, where: str) -> None:
+    """`textStyle` is eyecut's own key, like `mask`: applied after the compile.
+
+    Everything here is refused before the compile because `capcut text-style`
+    reports a bad option by exiting non-zero *after* the draft exists -- and
+    nothing downstream re-reads it, so the caption just keeps the default look
+    and the draft opens looking untouched.
+    """
+    if track_type != "text":
+        raise SpecError(f"{where}: `textStyle` only applies to text items, not "
+                        f"{track_type} (it is applied with `capcut text-style`, "
+                        f"which needs a text segment)")
+    if not isinstance(style, dict) or not style:
+        raise SpecError(f"{where}: `textStyle` must be a non-empty object of "
+                        f"options, got {style!r}")
+    for key, value in style.items():
+        if key in TEXT_STYLE_FLAGS:
+            continue
+        if key not in TEXT_STYLE_OPTIONS:
+            raise SpecError(f"{where}: unknown text style option {key!r}. "
+                            f"One of: {', '.join(TEXT_STYLE_OPTIONS)}, "
+                            f"{', '.join(TEXT_STYLE_FLAGS)}")
+        if key in TEXT_STYLE_PATHS:
+            _check_path(value, f"`{key}`", where)
+        elif key in TEXT_STYLE_COLORS:
+            if not isinstance(value, str) or not value.startswith("#"):
+                raise SpecError(f"{where}: text style `{key}` must be a "
+                                f'"#RRGGBB" string, got {value!r}')
+        elif not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise SpecError(f"{where}: text style `{key}` must be a number, "
+                            f"got {value!r}")
+
+
 def _check_mask(mask: Any, track_type: str, where: str) -> None:
     if track_type != "video":
         raise SpecError(f"{where}: `mask` only applies to video items, not "
@@ -231,6 +290,8 @@ def validate_spec(spec: dict[str, Any]) -> None:
                 _check_path(item.get("path"), "`path`", where)
             if item.get("mask") is not None:
                 _check_mask(item["mask"], track.get("type", "video"), where)
+            if item.get("textStyle") is not None:
+                _check_text_style(item["textStyle"], track.get("type", "video"), where)
     refs = _refs(spec)
 
     for index, op in enumerate(spec.get("operations") or []):

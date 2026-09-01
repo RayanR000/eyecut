@@ -23,7 +23,8 @@ from eyecut import media
 from eyecut.media import (MediaProbe, Registration, groups_of, probe,
                           register_media, set_timeline_duration,
                           timeline_duration_us, write_meta)
-from eyecut.spec import MASK_FLAGS, MASK_OPTIONS, validate_spec
+from eyecut.spec import (MASK_FLAGS, MASK_OPTIONS, TEXT_STYLE_FLAGS,
+                        TEXT_STYLE_OPTIONS, validate_spec)
 from eyecut.template import find_template
 
 
@@ -143,6 +144,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
 
     warnings += resync_speeds(project_dir, runner=runner, store=store)
     warnings += apply_masks(spec, project_dir, runner=runner, store=store)
+    warnings += apply_text_styles(spec, project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
     clear_inherited_media(meta_path)
@@ -176,11 +178,9 @@ def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     operation at all, so this shells out to `capcut mask` afterwards, the way
     `resync_speeds` repairs speed.
 
-    Items are matched to segments by position -- the nth item of the spec's nth
-    track of a type is the nth segment of the built track of that type. Compile
-    preserves both orders, and the filter/effect tracks it appends carry no items
-    to confuse the count. If the counts disagree the masks are skipped with a
-    warning rather than guessed at: a mask on the wrong shot is worse than none.
+    Items are matched to segments by position (`_segment_ids`). If the counts
+    disagree the masks are skipped with a warning rather than guessed at: a mask
+    on the wrong shot is worse than none.
     """
     wanted = [(track.get("type", "video"), index, item["mask"])
               for track in spec.get("tracks") or []
@@ -189,12 +189,7 @@ def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     if not wanted:
         return []
 
-    built = json.loads((project_dir / "draft_info.json").read_text())
-    segments: dict[tuple[str, int], str] = {}
-    for track in built.get("tracks", []):
-        for index, segment in enumerate(track.get("segments", [])):
-            segments[(track["type"], index)] = segment["id"]
-
+    segments = _segment_ids(project_dir)
     store = store or project_dir.parent
     warnings = []
     applied = False
@@ -212,6 +207,70 @@ def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
             applied = True
     if applied:
         stamp_mask_ids(project_dir)
+    return warnings
+
+
+def _segment_ids(project_dir: Path) -> dict[tuple[str, int], str]:
+    """(track type, position) -> segment id, for the timeline compile just built.
+
+    Items are matched to segments by position: the nth item of the spec's nth
+    track of a type is the nth segment of the built track of that type. Compile
+    preserves both orders, and the filter/effect tracks it appends carry no items
+    to confuse the count.
+    """
+    built = json.loads((project_dir / "draft_info.json").read_text())
+    return {(track["type"], index): segment["id"]
+            for track in built.get("tracks", [])
+            for index, segment in enumerate(track.get("segments", []))}
+
+
+def _text_style_argv(style: dict, project_dir: Path, segment_id: str) -> list[str]:
+    argv = ["capcut", "text-style", str(project_dir), segment_id]
+    for key, value in style.items():
+        if key in TEXT_STYLE_FLAGS:
+            if value:
+                argv.append(f"--{key}")
+        else:
+            argv += [TEXT_STYLE_OPTIONS[key], str(value)]
+    return argv
+
+
+def apply_text_styles(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                      store: Path | None = None) -> list[str]:
+    """Apply each text item's `textStyle` to the caption compile made for it.
+
+    The `text-style` OPERATION crashes capcut-cli 0.21.1 outright ("Cannot read
+    properties of undefined (reading 'alpha')") and `eyecut.spec` refuses it. The
+    standalone `capcut text-style` command it wraps is fine on the same styling
+    [proven -- a border and shadow that kill compile return
+    `{"ok":true,"applied":["shadow","border"]}` here], so the look is applied
+    afterwards, the way `mask` and speed are.
+
+    This is not cosmetic: a caption with no border or shadow is unreadable over
+    footage of any brightness, and `fontSize`/`color` on the item -- all compile
+    offers -- cannot supply either.
+    """
+    wanted = [(index, item["textStyle"])
+              for track in spec.get("tracks") or []
+              if track.get("type") == "text"
+              for index, item in enumerate(track.get("items") or [])
+              if item.get("textStyle") is not None]
+    if not wanted:
+        return []
+
+    segments = _segment_ids(project_dir)
+    store = store or project_dir.parent
+    warnings = []
+    for index, style in wanted:
+        segment_id = segments.get(("text", index))
+        if segment_id is None:
+            warnings.append(f"textStyle on text item {index} skipped: compile "
+                            f"produced no matching segment")
+            continue
+        code, stderr = runner(_text_style_argv(style, project_dir, segment_id), store)
+        if code != 0:
+            warnings.append(f"textStyle on text item {index} failed: "
+                            f"{stderr.strip()[:120]}")
     return warnings
 
 

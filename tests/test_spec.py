@@ -283,3 +283,38 @@ def test_a_template_needs_a_path_a_start_and_a_duration():
 def test_a_captions_srt_must_be_absolute_too():
     with pytest.raises(SpecError, match="absolute"):
         validate_spec(spec(operations=[{"op": "captions", "path": "subs/cues.srt"}]))
+
+
+def test_a_text_look_is_set_on_the_item_because_the_operation_crashes():
+    """The `text-style` OPERATION crashes capcut-cli 0.21.1, but the standalone
+    `capcut text-style` command it wraps works [proven -- the same border and
+    shadow that die in compile return `{"ok":true,"applied":["shadow","border"]}`
+    when applied to a built segment]. So the look is an item key, applied after
+    the compile the way `mask` is, and the refusal message points there.
+    """
+    validate_spec(spec(VIDEO, {"type": "text", "items": [
+        {"text": "TITLE", "start": 0, "duration": 3,
+         "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True}}]}))
+
+
+def test_the_refused_operation_names_the_item_key_that_replaces_it():
+    with pytest.raises(SpecError, match="textStyle"):
+        validate_spec(spec(VIDEO, TEXT, operations=[
+            {"op": "text-style", "target": "title", "bold": True}]))
+
+
+def test_an_unknown_text_style_option_is_named_rather_than_passed_through():
+    """An unknown flag makes `capcut text-style` exit non-zero *after* the draft
+    exists, so the caption silently keeps the default look."""
+    with pytest.raises(SpecError, match="outlineWidth"):
+        validate_spec(spec({"type": "text", "items": [
+            {"text": "T", "start": 0, "duration": 3, "textStyle": {"outlineWidth": 2}}]}))
+
+
+def test_a_text_look_on_a_video_item_is_refused():
+    """`capcut text-style` needs a text segment; on a video one it exits non-zero
+    after the draft is already written."""
+    with pytest.raises(SpecError, match="video"):
+        validate_spec(spec({"type": "video", "items": [
+            {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+             "textStyle": {"shadow": True}}]}))

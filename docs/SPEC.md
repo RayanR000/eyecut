@@ -104,7 +104,7 @@ length of the original, or save a template per length of line.
 **Available, never run** **[untested]**: `text-ranges` and the per-item `opacity`
 / `rotation` fields.
 
-**Not reachable**: `text-style` (crashes capcut-cli 0.21.1) · fonts (CapCut's
+**Not reachable**: fonts (CapCut's
 names are not published) · store-downloaded assets (`harvest-enums` is a path,
 not a built one) · compositing, blend modes, speed curves, motion tracking, and
 anything AI-driven in the app.
@@ -154,9 +154,23 @@ one cost a real debugging session.
   after** the base clip instead of layered over it, and the draft's stated duration
   no longer matches its content. Named tracks are how an overlay is built, so
   overlapping across them is allowed.
-- **`text-style` is refused outright** — see below.
+- **The `text-style` operation is refused outright** — it crashes the compiler.
+  Set `textStyle` on the text item instead; see below.
 
 ### What `write_draft` repairs after the compile
+
+- **Text look.** compile offers a text item `fontSize` and `color` and nothing
+  else, and its `text-style` op crashes. A caption with no border or shadow is
+  unreadable over footage of any brightness, so `textStyle` is an item key on text
+  items, applied afterwards with `capcut text-style`: `shadow` / `vertical` are
+  flags, `shadowColor` / `borderColor` / `bgColor` take `"#RRGGBB"`, `preset`
+  takes an absolute path to a `make-preset` file, and everything else is a number.
+
+  ```json
+  {"text": "TITLE", "start": 0, "duration": 3, "fontSize": 24,
+   "textStyle": {"borderWidth": 0.08, "borderColor": "#000000",
+                 "shadow": true, "shadowAlpha": 0.6}}
+  ```
 
 - **Speed.** compile writes `segment.speed` and leaves the speed *material* at 1.
   **CapCut reads the material**, so a clip asked for 2× plays at 1× while its trim
@@ -281,10 +295,14 @@ saying *which* of 345 effects it is, is guesswork.
 
 ## Upstream
 
-`text-style` crashes capcut-cli 0.21.1 with `Cannot read properties of undefined
-(reading 'alpha')` on `{"op": "text-style", "target": ..., "bold": true}`. eyecut
-refuses the op with an explanation rather than passing it through to crash; the
-refusal should be deleted when upstream fixes it. **Not yet reported.**
+The `text-style` **operation** crashes capcut-cli 0.21.1 with `Cannot read
+properties of undefined (reading 'alpha')` on
+`{"op": "text-style", "target": ..., "bold": true}`. Only the compile path is
+broken: the standalone `capcut text-style <project> <segment>` command applies the
+same border and shadow and returns `{"ok":true,"applied":["shadow","border"]}`
+**[proven]**. So eyecut refuses the op and reaches the styling through the
+`textStyle` item key instead, applied after the compile. The refusal should be
+deleted when upstream fixes it. **Not yet reported.**
 
 The better end state for `register_media` is still upstreaming: `capcut fixture
 <project> --out <dir>` on a CapCut-authored draft produces exactly the evidence

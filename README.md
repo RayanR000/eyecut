@@ -103,16 +103,21 @@ filters, 9 masks. List them with `capcut enums --scene-effects` and friends.
 Choosing one by name is easy; identifying which one made the flash in someone
 else's video is not, and remains out of scope.
 
-Two things `write_draft` finishes after the compile, because compile does not:
-**speed** (it writes `segment.speed` but leaves the speed material at 1, and the
-app reads the material) and **masks** (compile has no mask operation at all, so
-`mask` is the one key eyecut adds to compile's vocabulary — nine shapes, applied
-with `capcut mask` and matched to the segment by position, then stamped with the
+Three things `write_draft` finishes after the compile, because compile does not:
+**text look** (compile's `text-style` op crashes, and `fontSize`/`color` cannot
+give a caption the border or shadow that makes it readable over footage — so
+`textStyle` is an item key applied afterwards with `capcut text-style`, the
+standalone command that works), **speed** (compile writes `segment.speed` but
+leaves the speed material at 1, and the app reads the material) and **masks**
+(compile has no mask operation at all — nine shapes, applied with `capcut mask`
+and matched to the segment by position, then stamped with the
 `constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty).
 
 ```python
 {"path": src, "start": 0, "duration": 2, "sourceStart": 120, "speed": 2.0}
 {"path": src, "start": 2, "duration": 4, "mask": {"slug": "circle", "size": 0.7}}
+{"text": "TITLE", "start": 0, "duration": 3,
+ "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True}}
 ```
 
 `validate_spec` runs before the compile and rejects what compile accepts but
@@ -124,7 +129,7 @@ mis-builds. Each rule below is a mistake that cost a real debugging session:
 | A whole-frame zoom is `uniform_scale` | `scale` is not one of the 11 property names |
 | Easings are hyphenated: `ease-in-out` | `ease_in_out` is rejected, but only after the draft directory exists |
 | `audio-fade` targets an audio item | Same: a failed build that leaves an orphan folder |
-| `text-style` is refused outright | It crashes capcut-cli 0.21.1: `Cannot read properties of undefined (reading 'alpha')`. Set `fontSize` and `color` on the text item instead |
+| The `text-style` op is refused outright | It crashes capcut-cli 0.21.1: `Cannot read properties of undefined (reading 'alpha')`. Set `textStyle` on the text item instead — the standalone command it wraps works |
 | `filter`/`effect` need `start`, `duration` and `slug`, and take no `target` | A missing duration writes `target_timerange.duration: null`, which nulls the whole draft's duration and breaks reading it back |
 | `intensity` is 0–1 | Written verbatim: `5.0` lands in the draft as five times what the CapCut UI can express |
 | Template text does not resize to fit | The template keeps the font size it was designed at; a much longer line runs off both edges of the frame |

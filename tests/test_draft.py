@@ -494,3 +494,42 @@ def test_a_big_file_in_the_template_does_not_land_in_every_draft(tmp_path):
     assert used.exists(), "the media this timeline uses survives"
     assert caption.exists(), "anything draft_info.json names survives, however reached"
     assert len(removed) == 1 and "Sintel" in removed[0], removed
+
+
+@capcut_cli
+def test_a_text_look_in_the_spec_reaches_the_caption_it_names(tmp_path, drafts_dir, monkeypatch):
+    """The `text-style` OPERATION crashes capcut-cli 0.21.1 ("Cannot read
+    properties of undefined (reading 'alpha')"), so eyecut refuses it. The
+    standalone `capcut text-style` command works on the same styling, so the look
+    is an item key applied after the compile, matched to the segment by position
+    the way `mask` is. The second caption is styled and the first is not, so a
+    look applied to the wrong segment fails this test.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-textstyle", "tracks": [
+        {"type": "video", "items": [
+            {"path": str(source), "start": 0, "duration": 8, "sourceStart": 0}]},
+        {"type": "text", "items": [
+            {"text": "PLAIN", "start": 0, "duration": 4},
+            {"text": "STYLED", "start": 4, "duration": 4,
+             "textStyle": {"borderWidth": 0.08, "borderColor": "#000000",
+                           "shadow": True, "shadowAlpha": 0.6}}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == []
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    texts = {t["id"]: t for t in built["materials"]["texts"]}
+    captions = next(t for t in built["tracks"] if t["type"] == "text")
+    looks = [texts[s["material_id"]] for s in captions["segments"]]
+
+    assert [json.loads(t["content"])["text"] for t in looks] == ["PLAIN", "STYLED"]
+    assert not looks[0].get("has_shadow"), "the first caption keeps the default look"
+    assert looks[1]["has_shadow"] is True
+    assert looks[1]["shadow_alpha"] == 0.6
+    assert looks[1]["border_width"] == 0.08
+    assert looks[1]["border_color"] == "#000000"
