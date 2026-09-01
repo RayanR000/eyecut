@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from eyecut import draft as draft_mod
+from eyecut import frames as frames_mod
 from eyecut import media as media_mod
 from eyecut import proxy as proxy_mod
 from eyecut import shots as shots_mod
@@ -145,6 +146,37 @@ def browse_shots(source: str, out: str | None = None, windows: list | None = Non
             "windows": [[a, b] for a, b in spans],
             "page": str(index),
             "serve": f"python -m eyecut.static_server --root {out_dir}"}
+
+
+@server.tool()
+def extract_frames(source: str, times: list[float] | None = None,
+                   every: float | None = None, out: str | None = None,
+                   sheets: bool = True) -> dict[str, Any]:
+    """Write JPEGs from a video so the footage can be looked at. Read the returned
+    paths — contact sheets first if there are any, they hold every frame.
+
+    Also reports what makes a source not worth editing: AV1 (CapCut cannot read
+    it), fps != 24 (frame-interpolated, if the source is anime), and the windows
+    at each end where watermarks live.
+
+    source: the video file.
+    times:  seconds to sample. Defaults to 20/50/80% of the source.
+    every:  sample every N seconds instead.
+    out:    output directory (default ./frames/<name>).
+    sheets: tile the frames into contact sheets (~35 rows of 3).
+    """
+    got = frames_mod.extract_frames(source, times=times, every=every, out=out,
+                                   sheets=sheets)
+    return {"source": str(got.source),
+            "codec": got.codec,
+            "fps": got.fps,
+            "duration_s": got.duration_s,
+            "size": [got.width, got.height],
+            "times": got.times,
+            "frames": [str(p) for p in got.frames],
+            "sheets": [str(p) for p in got.sheets],
+            "unusable": got.unusable,
+            "warnings": got.warnings}
 
 
 @server.tool()

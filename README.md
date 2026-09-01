@@ -13,6 +13,7 @@ check in `eyecut.timeline` stands for a bug that already cost real work once.
 | `eyecut.timeline` | Edit an existing draft's timeline **in place**, with the rules enforced on save. |
 | `eyecut.draft` | Build a draft from a spec via `capcut-cli compile`, then finish what the compiler leaves undone. |
 | `eyecut.media` | Register media in `draft_meta_info.json` so CapCut does not prompt to relink. |
+| `eyecut.frames` | Extract JPEGs and contact sheets from a source, plus what makes it unusable. |
 | `eyecut.shots` | Build a browsable shot picker for a source file. |
 | `eyecut.proxy` | Render a watchable proxy of a draft without opening CapCut. |
 | `eyecut.speech` | Find spoken lines in footage. |
