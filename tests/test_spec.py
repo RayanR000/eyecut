@@ -131,3 +131,48 @@ def test_sourceStart_is_not_confused_for_an_overlap():
 def test_tracks_of_different_types_may_overlap_freely():
     """An audio bed under the whole edit overlaps every video segment by design."""
     validate_spec(spec(VIDEO, AUDIO, TEXT))
+
+
+def test_a_filter_over_a_span_passes():
+    validate_spec(spec(operations=[
+        {"op": "filter", "slug": "vintage", "start": 0, "duration": 8, "intensity": 0.6}]))
+
+
+def test_an_effect_over_a_span_passes():
+    validate_spec(spec(operations=[
+        {"op": "effect", "slug": "blur", "start": 0, "duration": 2}]))
+
+
+def test_a_span_operation_without_a_duration_writes_a_null_timeline():
+    """compile accepts an effect with no duration and writes
+    `target_timerange.duration: null`, which makes the whole draft's `duration`
+    null too. eyecut then dies reading it back -- a TypeError from media.py, on a
+    draft directory that has already been created [proven].
+    """
+    with pytest.raises(SpecError, match="duration"):
+        validate_spec(spec(operations=[{"op": "effect", "slug": "blur", "start": 0}]))
+    with pytest.raises(SpecError, match="start"):
+        validate_spec(spec(operations=[{"op": "filter", "slug": "vintage", "duration": 2}]))
+
+
+def test_a_span_operation_needs_a_slug():
+    with pytest.raises(SpecError, match="slug"):
+        validate_spec(spec(operations=[{"op": "effect", "start": 0, "duration": 2}]))
+
+
+def test_intensity_outside_0_to_1_is_written_verbatim():
+    """`intensity: 5.0` compiles and lands in the draft as 5 -- five times the
+    maximum the CapCut UI can express. Nothing downstream complains [proven]."""
+    with pytest.raises(SpecError, match="0.*1"):
+        validate_spec(spec(operations=[
+            {"op": "filter", "slug": "vintage", "start": 0, "duration": 2,
+             "intensity": 5.0}]))
+
+
+def test_span_operations_take_no_target():
+    """`filter` and `effect` apply to a stretch of TIMELINE, not to a clip. Giving
+    one a `target` reads like it is scoped to that clip; it is not."""
+    with pytest.raises(SpecError, match="target"):
+        validate_spec(spec(operations=[
+            {"op": "effect", "slug": "blur", "start": 0, "duration": 2,
+             "target": "shot0"}]))

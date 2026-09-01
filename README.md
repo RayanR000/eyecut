@@ -97,6 +97,12 @@ items by `ref` — `transition`, `filter`, `effect`, `keyframe`, `audio-fade`,
 `text-style`, `text-ranges`, `template`, `captions`. eyecut renames nothing, so a
 feature capcut-cli gains arrives here for free.
 
+Effects, transitions and filters are named by slug from CapCut's own catalogue —
+116 transitions, 345 scene effects, 95 character effects, 76 text intros, 10
+filters, 9 masks. List them with `capcut enums --scene-effects` and friends.
+Choosing one by name is easy; identifying which one made the flash in someone
+else's video is not, and remains out of scope.
+
 `validate_spec` runs before the compile and rejects what compile accepts but
 mis-builds. Each rule below is a mistake that cost a real debugging session:
 
@@ -107,6 +113,8 @@ mis-builds. Each rule below is a mistake that cost a real debugging session:
 | Easings are hyphenated: `ease-in-out` | `ease_in_out` is rejected, but only after the draft directory exists |
 | `audio-fade` targets an audio item | Same: a failed build that leaves an orphan folder |
 | `text-style` is refused outright | It crashes capcut-cli 0.21.1: `Cannot read properties of undefined (reading 'alpha')`. Set `fontSize` and `color` on the text item instead |
+| `filter`/`effect` need `start`, `duration` and `slug`, and take no `target` | A missing duration writes `target_timerange.duration: null`, which nulls the whole draft's duration and breaks reading it back |
+| `intensity` is 0–1 | Written verbatim: `5.0` lands in the draft as five times what the CapCut UI can express |
 | Items on one track may not overlap | The detectable half of the `start`/`sourceStart` mistake above |
 
 ```python

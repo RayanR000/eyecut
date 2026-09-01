@@ -255,3 +255,32 @@ def test_audio_text_transitions_and_keyframes_all_reach_the_draft(tmp_path, draf
     meta = json.loads((draft.path / "draft_meta_info.json").read_text())
     registered = {e["file_Path"] for g in meta["draft_materials"] for e in g["value"]}
     assert registered == {"./assets/video/a.mp4", "./assets/audio/bed.wav"}
+
+
+@capcut_cli
+def test_filters_and_effects_get_tracks_of_their_own(tmp_path, drafts_dir, monkeypatch):
+    """`filter` and `effect` cover a span of timeline, and compile gives each its
+    own track. The slugs resolve to real CapCut resource ids, so this is the 345-
+    effect catalogue reachable by name -- picking one is easy, and only naming the
+    one in someone else's video is guesswork.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=10",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-fx", "tracks": [{"type": "video", "items": [
+        {"path": str(source), "start": 0, "duration": 8, "ref": "a"}]}],
+        "operations": [
+            {"op": "filter", "slug": "vintage", "start": 0, "duration": 8, "intensity": 0.6},
+            {"op": "effect", "slug": "blur", "start": 0, "duration": 2}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    assert {t["type"] for t in built["tracks"]} == {"video", "filter", "effect"}
+    applied = {m["name"]: m["value"] for m in built["materials"]["video_effects"]}
+    assert applied == {"Vintage": 0.6, "Blur": 1}
+    assert all(m.get("effect_id") or m.get("resource_id")
+               for m in built["materials"]["video_effects"]), "slugs must resolve to ids"
+    assert draft.duration_us == 8_000_000

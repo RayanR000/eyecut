@@ -35,6 +35,9 @@ OPERATIONS = ("transition", "filter", "effect", "keyframe", "audio-fade",
 TARGETED = ("transition", "keyframe", "audio-fade", "text-style", "text-ranges")
 # ops that only mean anything on an audio segment
 AUDIO_ONLY = ("audio-fade",)
+# these apply to a stretch of TIMELINE rather than to one item: `start` +
+# `duration` + `slug`, and no target. They get a track of their own in the draft.
+SPANNING = ("filter", "effect")
 
 # `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
 # "Cannot read properties of undefined (reading 'alpha')". Refused here with an
@@ -101,6 +104,33 @@ def _check_keyframe(op: dict, where: str) -> None:
                         f"underscores. One of: {', '.join(EASINGS)}")
 
 
+def _check_span(op: dict, where: str) -> None:
+    """`filter` and `effect` cover a timeline range. Every field here is one
+    compile accepts missing or out of range, writing something that never
+    reaches the screen."""
+    if "target" in op:
+        raise SpecError(f"{where}: `{op['op']}` applies to a span of timeline, not to "
+                        f"one item — it takes `start` and `duration`, not `target`.")
+    if not isinstance(op.get("slug"), str) or not op["slug"]:
+        raise SpecError(f"{where}: `{op['op']}` needs a `slug`. "
+                        f"List them with `capcut enums --scene-effects` "
+                        f"(345), `--filters` (10), `--transitions` (116).")
+    for field in ("start", "duration"):
+        value = op.get(field)
+        if not isinstance(value, (int, float)):
+            raise SpecError(
+                f"{where}: `{op['op']}` needs `{field}` (seconds). Without a duration "
+                f"compile writes `target_timerange.duration: null`, which nulls the "
+                f"whole draft's duration and breaks reading it back.")
+    if op["duration"] <= 0:
+        raise SpecError(f"{where}: `duration` must be > 0")
+    intensity = op.get("intensity")
+    if intensity is not None and not 0 <= intensity <= 1:
+        raise SpecError(f"{where}: `intensity` {intensity} is outside 0–1. It is "
+                        f"written verbatim, so 5.0 lands in the draft as five times "
+                        f"what the CapCut UI can express.")
+
+
 def validate_spec(spec: dict[str, Any]) -> None:
     """Raise `SpecError` if `spec` would not build what it appears to say."""
     if not isinstance(spec, dict):
@@ -128,5 +158,7 @@ def validate_spec(spec: dict[str, Any]) -> None:
             if name in AUDIO_ONLY and refs[target] != "audio":
                 raise SpecError(f"{where}: `{name}` only applies to audio segments, "
                                 f"but {target!r} is on a {refs[target]} track")
+        if name in SPANNING:
+            _check_span(op, where)
         if name == "keyframe":
             _check_keyframe(op, where)
