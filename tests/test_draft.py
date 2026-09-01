@@ -417,3 +417,52 @@ def test_captions_come_from_an_srt_and_land_on_their_own_track(tmp_path, drafts_
     texts = built["materials"]["texts"]
     assert [m["sub_type"] for m in texts] == [1, 1], "captions, not plain text"
     assert [json.loads(m["content"])["text"] for m in texts] == ["First line", "Second line"]
+
+
+@capcut_cli
+def test_a_saved_template_carries_its_style_and_takes_new_text(tmp_path, drafts_dir,
+                                                               monkeypatch):
+    """The reuse loop: style a title once, apply it many times. `capcut
+    save-template` captures a segment and its materials; the `template` op clones
+    them with fresh ids and swaps the text, recomputing the style's character range
+    so the styling still covers the new string [proven].
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=10",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+
+    # 1. a draft holding the styled title
+    styled = write_draft({"name": "eyecut-tpl-src", "tracks": [
+        {"type": "video", "items": [{"path": str(source), "start": 0, "duration": 5}]},
+        {"type": "text", "items": [{"text": "MY TITLE", "start": 0, "duration": 3,
+                                    "fontSize": 30, "color": "#FFD700"}]}]},
+        drafts_dir / "src", [])
+    text_id = json.loads(subprocess.run(["capcut", "texts", str(styled.path)],
+                                        capture_output=True, text=True).stdout)[0]["id"]
+    template = tmp_path / "gold-title.json"
+    subprocess.run(["capcut", "save-template", str(styled.path), text_id, "gold-title",
+                    "--out", str(template)], capture_output=True, check=True)
+
+    # 2. a different draft that reuses it twice, with different words
+    reused = write_draft({"name": "eyecut-tpl", "tracks": [
+        {"type": "video", "items": [{"path": str(source), "start": 0, "duration": 8}]}],
+        "operations": [
+            {"op": "template", "path": str(template), "start": 0, "duration": 3,
+             "text": "STOP USING THE DEFAULT FONT"},
+            {"op": "template", "path": str(template), "start": 4, "duration": 3,
+             "text": "SECOND CARD"}]},
+        drafts_dir / "reuse", [])
+
+    built = json.loads((reused.path / "draft_info.json").read_text())
+    contents = [json.loads(m["content"]) for m in built["materials"]["texts"]]
+    assert [c["text"] for c in contents] == ["STOP USING THE DEFAULT FONT", "SECOND CARD"]
+    for content, text in zip(contents, ["STOP USING THE DEFAULT FONT", "SECOND CARD"]):
+        style = content["styles"][0]
+        assert style["size"] == 30, "the style comes from the template"
+        assert style["fill"]["content"]["solid"]["color"][0] == 1, "gold, from the template"
+        assert style["range"] == [0, len(text)], "the range follows the new text"
+
+    captions = next(t for t in built["tracks"] if t["type"] == "text")
+    assert [s["target_timerange"]["start"] for s in captions["segments"]] == [0, 4_000_000]

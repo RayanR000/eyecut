@@ -252,3 +252,34 @@ def test_two_unnamed_video_tracks_that_do_not_collide_are_fine():
 
 def test_captions_take_an_srt_path():
     validate_spec(spec(operations=[{"op": "captions", "path": "/subs/cues.srt"}]))
+
+
+def test_a_relative_media_path_is_refused_because_the_spec_moves():
+    """compile resolves a relative path against the spec file, and eyecut writes the
+    spec into the drafts store -- so `footage/a.mp4` resolves inside
+    ~/Movies/CapCut/.../com.lveditor.draft/ and compile reports a path the caller
+    never wrote [proven]."""
+    with pytest.raises(SpecError, match="absolute"):
+        validate_spec(spec({"type": "video", "items": [
+            {"path": "footage/a.mp4", "start": 0, "duration": 3}]}))
+
+
+def test_a_text_item_needs_no_path():
+    validate_spec(spec(TEXT))
+
+
+def test_a_template_needs_a_path_a_start_and_a_duration():
+    validate_spec(spec(operations=[
+        {"op": "template", "path": "/t/gold-title.json", "start": 0, "duration": 3,
+         "text": "HELLO"}]))
+    with pytest.raises(SpecError, match="duration"):
+        validate_spec(spec(operations=[
+            {"op": "template", "path": "/t/gold-title.json", "start": 0}]))
+    with pytest.raises(SpecError, match="absolute"):
+        validate_spec(spec(operations=[
+            {"op": "template", "path": "templates/gold.json", "start": 0, "duration": 3}]))
+
+
+def test_a_captions_srt_must_be_absolute_too():
+    with pytest.raises(SpecError, match="absolute"):
+        validate_spec(spec(operations=[{"op": "captions", "path": "subs/cues.srt"}]))

@@ -12,6 +12,7 @@ these constants have to be re-checked when capcut-cli updates. They come from
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 US = 1_000_000
@@ -38,6 +39,8 @@ AUDIO_ONLY = ("audio-fade",)
 # these apply to a stretch of TIMELINE rather than to one item: `start` +
 # `duration` + `slug`, and no target. They get a track of their own in the draft.
 SPANNING = ("filter", "effect")
+# ops that name a file of their own rather than a declared item
+FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json"}
 
 # `capcut enums --masks`. Masks are the one thing here compile does NOT do: there
 # is no mask operation, so `mask` is eyecut's own item key, applied after the
@@ -136,6 +139,34 @@ def _check_keyframe(op: dict, where: str) -> None:
                         f"underscores. One of: {', '.join(EASINGS)}")
 
 
+def _check_path(value: Any, what: str, where: str) -> None:
+    """Paths must be absolute.
+
+    compile resolves a relative path against the *spec file*, and eyecut writes the
+    spec into the drafts store -- so `footage/a.mp4` resolves inside
+    `~/Movies/CapCut/.../com.lveditor.draft/` and the error names a path the caller
+    never wrote [proven].
+    """
+    if not isinstance(value, str) or not value:
+        raise SpecError(f"{where}: {what} is required")
+    if not Path(value).is_absolute():
+        raise SpecError(f"{where}: {what} must be an absolute path — compile resolves "
+                        f"a relative one against the spec file, which eyecut writes "
+                        f"into the drafts store, not your working directory "
+                        f"(got {value!r})")
+
+
+def _check_file_op(op: dict, where: str) -> None:
+    """`captions` and `template` carry a file of their own, not a `target`."""
+    _check_path(op.get("path"), FILE_OPS[op["op"]], where)
+    if op["op"] == "template":
+        for field in ("start", "duration"):
+            if not isinstance(op.get(field), (int, float)):
+                raise SpecError(f"{where}: `template` needs `{field}` (seconds)")
+        if op["duration"] <= 0:
+            raise SpecError(f"{where}: `duration` must be > 0")
+
+
 def _check_span(op: dict, where: str) -> None:
     """`filter` and `effect` cover a timeline range. Every field here is one
     compile accepts missing or out of range, writing something that never
@@ -195,9 +226,11 @@ def validate_spec(spec: dict[str, Any]) -> None:
     _check_overlaps(spec)
     for track_index, track in enumerate(spec.get("tracks") or []):
         for item_index, item in enumerate(track.get("items") or []):
+            where = f"tracks[{track_index}].items[{item_index}]"
+            if track.get("type", "video") != "text":
+                _check_path(item.get("path"), "`path`", where)
             if item.get("mask") is not None:
-                _check_mask(item["mask"], track.get("type", "video"),
-                            f"tracks[{track_index}].items[{item_index}]")
+                _check_mask(item["mask"], track.get("type", "video"), where)
     refs = _refs(spec)
 
     for index, op in enumerate(spec.get("operations") or []):
@@ -217,6 +250,8 @@ def validate_spec(spec: dict[str, Any]) -> None:
             if name in AUDIO_ONLY and refs[target] != "audio":
                 raise SpecError(f"{where}: `{name}` only applies to audio segments, "
                                 f"but {target!r} is on a {refs[target]} track")
+        if name in FILE_OPS:
+            _check_file_op(op, where)
         if name in SPANNING:
             _check_span(op, where)
         if name == "keyframe":
