@@ -172,3 +172,34 @@ def test_the_draft_gets_a_timeline_identity_of_its_own(tmp_path, drafts_dir, mon
     assert [t["id"] for t in index["timelines"]] == [built["id"]]
     assert (draft.path / "Timelines" / built["id"] / "draft_info.json").is_file()
     assert built["id"] != template_id, "must not reuse the template's timeline id"
+
+
+@capcut_cli
+def test_the_source_in_point_is_sourceStart_not_start(tmp_path, drafts_dir, monkeypatch):
+    """`start` is where the clip lands on the TIMELINE; the in-point into the source
+    is `sourceStart` (camelCase, compile.js:485). Confusing them is silent and
+    expensive: three 4s shots taken from 120s/300s/610s of a film compiled to a
+    615-second draft with two long gaps, because each `start` was read as a
+    timeline position. `--check` accepts an unknown key without complaint, so
+    nothing catches it until you watch the result.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-in", "tracks": [{"type": "video", "items": [
+        {"path": str(source), "start": 0, "duration": 2, "sourceStart": 5},
+        {"path": str(source), "start": 2, "duration": 3, "sourceStart": 12}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    segments = [s for t in json.loads((draft.path / "draft_info.json").read_text())["tracks"]
+                for s in t["segments"]]
+    assert [s["source_timerange"] for s in segments] == [
+        {"start": 5_000_000, "duration": 2_000_000},
+        {"start": 12_000_000, "duration": 3_000_000}]
+    assert [s["target_timerange"] for s in segments] == [
+        {"start": 0, "duration": 2_000_000},
+        {"start": 2_000_000, "duration": 3_000_000}]
+    assert draft.duration_us == 5_000_000, "timeline is the sum of the clips, not the last in-point"

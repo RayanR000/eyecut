@@ -55,6 +55,27 @@ warnings = tl.save(backup_tag="v1")   # raises unless every fatal check passes
 `save()` refuses rather than corrupting. `restore(tag)` copies a backup back, which
 is what makes a rebuild script safe to re-run: restore, apply, save.
 
+## Writing a draft
+
+Times are in seconds. The one that costs you an afternoon:
+
+- **`start` is the timeline position. `sourceStart` is the in-point into the
+  source file.** Three 4-second shots taken from 120s, 300s and 610s of a film
+  compiled to a 615-second draft with two long gaps, because each `start` was read
+  as a timeline position. `capcut compile --check` accepts an unknown key without
+  complaint, so nothing catches the mistake until you watch the result.
+
+```python
+items, at = [], 0.0
+for start_s, end_s in spans:                 # in-points into the source
+    items.append({"path": str(src), "start": at,
+                  "duration": end_s - start_s, "sourceStart": start_s})
+    at += end_s - start_s                    # where it lands on the timeline
+
+write_draft({"name": "MY_PROJECT", "tracks": [{"type": "video", "items": items}]},
+            store / "MY_PROJECT", [probe_media(src)])
+```
+
 ## Command line
 
 ```bash
