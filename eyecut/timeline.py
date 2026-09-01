@@ -42,6 +42,7 @@ from pathlib import Path
 
 from eyecut import media
 from eyecut.draft import mirror_timeline_files
+from eyecut.media import set_timeline_duration
 
 DRAFT_STORE = Path.home() / "Movies/CapCut/User Data/Projects/com.lveditor.draft"
 
@@ -344,7 +345,21 @@ class Timeline:
         # under Timelines/<main_timeline_id>/ -- writing only this one loses the
         # whole edit without an error [proven].
         mirror_timeline_files(self.dir)
+        self._sync_meta_duration(force=force)
         return [p for p in problems if not p.fatal]
+
+    def _sync_meta_duration(self, *, force: bool = False) -> None:
+        """Carry the new duration into draft_meta_info.json.
+
+        CapCut's project list reads the duration from the meta file, not from the
+        timeline, so an edit that changes the length leaves the list showing the
+        old one -- the same stale-`tm_duration` symptom that lists a generated
+        draft as 00:00. Shortening a draft and seeing the old length in the
+        project list is how you learn the two files had drifted apart.
+        """
+        meta_path = self.dir / "draft_meta_info.json"
+        if meta_path.is_file():
+            set_timeline_duration(meta_path, int(self.d.get("duration", 0)), force=force)
 
     def restore(self, backup_tag: str) -> None:
         """Copy a `.<tag>_bak` back over the draft.

@@ -346,3 +346,30 @@ def test_a_draft_without_a_timelines_folder_still_saves(tmp_path):
 
     assert (tl.dir / "template-2.tmp").read_text() == (tl.dir / "draft_info.json").read_text()
     assert not (tl.dir / "Timelines").exists()
+
+
+def test_saving_carries_the_new_duration_into_the_project_list(tmp_path):
+    """CapCut's project list reads tm_duration from draft_meta_info.json, not from
+    the timeline. Shorten a draft without updating it and the list keeps showing
+    the old length."""
+    tl = build(tmp_path, [seg(0, 4_000_000, "MAT-A")])
+    (tl.dir / "draft_meta_info.json").write_text(
+        json.dumps({"draft_name": "PROJECT", "tm_duration": 4_000_000, "draft_materials": []}))
+
+    tl.d["tracks"][0]["segments"] = [seg(0, 1_000_000, "MAT-A")]
+    tl.d["duration"] = 1_000_000
+    tl.save()
+
+    meta = json.loads((tl.dir / "draft_meta_info.json").read_text())
+    assert meta["tm_duration"] == 1_000_000
+
+
+def test_saving_a_draft_with_no_meta_file_still_works(tmp_path):
+    """The minimal drafts the other tests build have no sidecar; saving one must
+    not fail for want of a file CapCut would have written itself."""
+    tl = build(tmp_path, [seg(0, 1_000_000, "MAT-A")])
+    assert not (tl.dir / "draft_meta_info.json").exists()
+
+    tl.save()
+
+    assert json.loads((tl.dir / "draft_info.json").read_text())["tracks"]

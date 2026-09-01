@@ -172,7 +172,8 @@ def timeline_duration_us(draft_info_path: Path | str) -> int:
     return int(json.loads(Path(draft_info_path).read_text())["duration"])
 
 
-def set_timeline_duration(meta_path: Path | str, duration_us: int) -> Path:
+def set_timeline_duration(meta_path: Path | str, duration_us: int, *,
+                          force: bool = False) -> Path:
     """Mirror the timeline duration into `draft_meta_info.json` → `tm_duration`.
 
     CapCut's project list reads the duration from the *meta* file, not from
@@ -185,7 +186,7 @@ def set_timeline_duration(meta_path: Path | str, duration_us: int) -> Path:
     meta_path = Path(meta_path)
     if not isinstance(duration_us, int) or isinstance(duration_us, bool):
         raise ValueError(f"duration must be integer microseconds, got {duration_us!r}")
-    if capcut_is_running():
+    if not force and capcut_is_running():
         raise RuntimeError("CapCut is running — it overwrites draft_meta_info.json on quit. "
                            "Quit CapCut and re-run.")
     meta = json.loads(meta_path.read_text())
