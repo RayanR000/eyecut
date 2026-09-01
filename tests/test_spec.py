@@ -318,3 +318,46 @@ def test_a_text_look_on_a_video_item_is_refused():
         validate_spec(spec({"type": "video", "items": [
             {"path": "/footage/a.mp4", "start": 0, "duration": 4,
              "textStyle": {"shadow": True}}]}))
+
+
+def test_an_animation_reaches_a_caption_and_a_clip_alike():
+    """`anim` is eyecut's own item key, like `mask` and `textStyle`: compile has no
+    animation operation, so intros and outros are applied afterwards with
+    `capcut text-anim` on text and `capcut image-anim` on video.
+    """
+    validate_spec(spec(
+        {"type": "video", "items": [
+            {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+             "anim": {"intro": "zoom-1", "introDuration": 0.5, "combo": "bounce-1"}}]},
+        {"type": "text", "items": [
+            {"text": "T", "start": 0, "duration": 3,
+             "anim": {"intro": "typewriter", "introDuration": 0.6, "outro": "fade-out"}}]}))
+
+
+def test_a_combo_animation_on_a_caption_is_refused():
+    """`capcut text-anim` takes only --intro/--outro; --combo is image-anim's. On a
+    text item it would exit non-zero after the draft is written."""
+    with pytest.raises(SpecError, match="combo"):
+        validate_spec(spec({"type": "text", "items": [
+            {"text": "T", "start": 0, "duration": 3, "anim": {"combo": "bounce-1"}}]}))
+
+
+def test_an_animation_on_an_audio_item_is_refused():
+    with pytest.raises(SpecError, match="audio"):
+        validate_spec(spec({"type": "audio", "items": [
+            {"path": "/music/bed.wav", "start": 0, "duration": 4,
+             "anim": {"intro": "fade-in"}}]}))
+
+
+def test_an_unknown_animation_key_is_named_rather_than_passed_through():
+    with pytest.raises(SpecError, match="loop"):
+        validate_spec(spec({"type": "text", "items": [
+            {"text": "T", "start": 0, "duration": 3, "anim": {"loop": "wiggle"}}]}))
+
+
+def test_an_animation_with_a_duration_but_no_slug_is_refused():
+    """`--intro-duration` alone animates nothing; compile and the CLI both accept
+    it, so the caption opens plain."""
+    with pytest.raises(SpecError, match="introDuration"):
+        validate_spec(spec({"type": "text", "items": [
+            {"text": "T", "start": 0, "duration": 3, "anim": {"introDuration": 0.5}}]}))

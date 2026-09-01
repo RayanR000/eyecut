@@ -159,6 +159,20 @@ one cost a real debugging session.
 
 ### What `write_draft` repairs after the compile
 
+- **Animation.** compile has no animation operation, so every cut is a hard cut
+  and every caption simply appears. `anim` is an item key on video and text items:
+  `intro`, `outro` and (video only) `combo`, each with an optional
+  `<slot>Duration` in seconds, applied with `capcut text-anim` on a caption and
+  `capcut image-anim` on a clip. The slugs are **not** validated against a list —
+  `capcut enums` carries 318 across the five animation catalogues and the app's
+  store adds more, so a whitelist would reject valid ones. An unknown slug makes
+  the CLI exit non-zero and becomes a warning naming the item.
+
+  ```json
+  {"text": "TITLE", "start": 0, "duration": 3,
+   "anim": {"intro": "typewriter", "introDuration": 0.6, "outro": "fade-out"}}
+  ```
+
 - **Text look.** compile offers a text item `fontSize` and `color` and nothing
   else, and its `text-style` op crashes. A caption with no border or shadow is
   unreadable over footage of any brightness, so `textStyle` is an item key on text

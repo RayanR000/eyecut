@@ -23,7 +23,7 @@ from eyecut import media
 from eyecut.media import (MediaProbe, Registration, groups_of, probe,
                           register_media, set_timeline_duration,
                           timeline_duration_us, write_meta)
-from eyecut.spec import (MASK_FLAGS, MASK_OPTIONS, TEXT_STYLE_FLAGS,
+from eyecut.spec import (ANIM_OPTIONS, MASK_FLAGS, MASK_OPTIONS, TEXT_STYLE_FLAGS,
                         TEXT_STYLE_OPTIONS, validate_spec)
 from eyecut.template import find_template
 
@@ -145,6 +145,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     warnings += resync_speeds(project_dir, runner=runner, store=store)
     warnings += apply_masks(spec, project_dir, runner=runner, store=store)
     warnings += apply_text_styles(spec, project_dir, runner=runner, store=store)
+    warnings += apply_animations(spec, project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
     clear_inherited_media(meta_path)
@@ -270,6 +271,48 @@ def apply_text_styles(spec: dict, project_dir: Path, *, runner=_capcut_runner,
         code, stderr = runner(_text_style_argv(style, project_dir, segment_id), store)
         if code != 0:
             warnings.append(f"textStyle on text item {index} failed: "
+                            f"{stderr.strip()[:120]}")
+    return warnings
+
+
+def apply_animations(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                     store: Path | None = None) -> list[str]:
+    """Apply each item's `anim` to the segment compile made for it.
+
+    compile has no animation operation, so intros and outros are applied
+    afterwards the way `mask` and `textStyle` are. The command depends on what is
+    being animated: `capcut text-anim` for a caption, `capcut image-anim` for a
+    clip or still. Both take the same --intro/--outro/--duration shape, so the
+    only difference is the verb.
+
+    An unknown slug is what this cannot catch up front -- there are 318 across the
+    five catalogues -- so the CLI's refusal is turned into a warning naming the
+    item. Silence would leave a clip that simply never animates, with nothing in
+    the draft to say why.
+    """
+    wanted = [(track.get("type", "video"), index, item["anim"])
+              for track in spec.get("tracks") or []
+              for index, item in enumerate(track.get("items") or [])
+              if item.get("anim") is not None]
+    if not wanted:
+        return []
+
+    segments = _segment_ids(project_dir)
+    store = store or project_dir.parent
+    warnings = []
+    for track_type, index, anim in wanted:
+        segment_id = segments.get((track_type, index))
+        if segment_id is None:
+            warnings.append(f"anim on {track_type} item {index} skipped: compile "
+                            f"produced no matching segment")
+            continue
+        verb = "text-anim" if track_type == "text" else "image-anim"
+        argv = ["capcut", verb, str(project_dir), segment_id]
+        for key, value in anim.items():
+            argv += [ANIM_OPTIONS[key], str(value)]
+        code, stderr = runner(argv, store)
+        if code != 0:
+            warnings.append(f"anim on {track_type} item {index} failed: "
                             f"{stderr.strip()[:120]}")
     return warnings
 

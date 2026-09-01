@@ -533,3 +533,43 @@ def test_a_text_look_in_the_spec_reaches_the_caption_it_names(tmp_path, drafts_d
     assert looks[1]["shadow_alpha"] == 0.6
     assert looks[1]["border_width"] == 0.08
     assert looks[1]["border_color"] == "#000000"
+
+
+@capcut_cli
+def test_an_animation_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_dir, monkeypatch):
+    """compile has no animation operation, so `anim` is applied afterwards --
+    `capcut text-anim` on a caption, `capcut image-anim` on a clip -- matched to
+    the segment by position. The second clip and the caption are animated and the
+    first clip is not, so an animation on the wrong segment fails this test.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-anim", "tracks": [
+        {"type": "video", "items": [
+            {"path": str(source), "start": 0, "duration": 4, "sourceStart": 0},
+            {"path": str(source), "start": 4, "duration": 4, "sourceStart": 8,
+             "anim": {"intro": "fade-in", "introDuration": 0.5}}]},
+        {"type": "text", "items": [
+            {"text": "TITLE", "start": 0, "duration": 3,
+             "anim": {"intro": "typewriter", "introDuration": 0.6}}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == []
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    animations = {a["id"]: a for a in built["materials"]["material_animations"]}
+    assert sorted(anim["animations"][0]["name"] for anim in animations.values()) == \
+        ["Fade In", "Typewriter"]
+
+    segments = [s for t in built["tracks"] for s in t["segments"]]
+    animated = {anim["animations"][0]["name"]:
+                next(s for s in segments if anim["id"] in s.get("extra_material_refs", []))
+                for anim in animations.values()}
+    assert animated["Fade In"]["target_timerange"]["start"] == 4_000_000, \
+        "the second clip, not the first"
+    assert animated["Typewriter"]["target_timerange"]["duration"] == 3_000_000, "the caption"
+    assert [anim["animations"][0]["duration"] for anim in animations.values()
+            if anim["animations"][0]["name"] == "Typewriter"] == [600_000]

@@ -103,8 +103,10 @@ filters, 9 masks. List them with `capcut enums --scene-effects` and friends.
 Choosing one by name is easy; identifying which one made the flash in someone
 else's video is not, and remains out of scope.
 
-Three things `write_draft` finishes after the compile, because compile does not:
-**text look** (compile's `text-style` op crashes, and `fontSize`/`color` cannot
+Four things `write_draft` finishes after the compile, because compile does not:
+**animation** (`anim` on a video or text item — an intro, outro or combo from
+CapCut's 318 catalogue slugs, applied with `capcut text-anim` on a caption and
+`capcut image-anim` on a clip; without it every cut is a hard cut), **text look** (compile's `text-style` op crashes, and `fontSize`/`color` cannot
 give a caption the border or shadow that makes it readable over footage — so
 `textStyle` is an item key applied afterwards with `capcut text-style`, the
 standalone command that works), **speed** (compile writes `segment.speed` but
@@ -117,7 +119,8 @@ and matched to the segment by position, then stamped with the
 {"path": src, "start": 0, "duration": 2, "sourceStart": 120, "speed": 2.0}
 {"path": src, "start": 2, "duration": 4, "mask": {"slug": "circle", "size": 0.7}}
 {"text": "TITLE", "start": 0, "duration": 3,
- "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True}}
+ "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True},
+ "anim": {"intro": "typewriter", "introDuration": 0.6}}
 ```
 
 `validate_spec` runs before the compile and rejects what compile accepts but

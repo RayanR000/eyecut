@@ -76,6 +76,24 @@ TEXT_STYLE_COLORS = ("shadowColor", "borderColor", "bgColor")
 # a make-preset file, so it is a path and gets the absolute-path rule
 TEXT_STYLE_PATHS = ("preset",)
 
+# `capcut text-anim` / `image-anim` option names, keyed by the spec key. compile
+# has no animation operation either, so `anim` is a third eyecut item key applied
+# afterwards. Which command runs is decided by the track type: captions animate
+# with text-anim, clips and stills with image-anim.
+ANIM_OPTIONS = {"intro": "--intro", "outro": "--outro", "combo": "--combo",
+                "introDuration": "--intro-duration",
+                "outroDuration": "--outro-duration",
+                "comboDuration": "--combo-duration"}
+# a slug and the duration that belongs to it
+ANIM_SLOTS = {"intro": "introDuration", "outro": "outroDuration",
+              "combo": "comboDuration"}
+# `capcut text-anim` takes --intro/--outro only; --combo is image-anim's
+ANIM_TEXT_SLOTS = ("intro", "outro")
+# the slugs are NOT checked against a list: `capcut enums` carries 318 of them
+# across the five animation catalogues and the app's store adds more, so a
+# whitelist here would reject valid ones. An unknown slug makes the CLI exit
+# non-zero after the draft exists, which `apply_animations` turns into a warning.
+
 # `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
 # "Cannot read properties of undefined (reading 'alpha')". Refused here with an
 # explanation rather than passed through to crash. Only the compile OPERATION is
@@ -220,6 +238,42 @@ def _check_span(op: dict, where: str) -> None:
                         f"what the CapCut UI can express.")
 
 
+def _check_anim(anim: Any, track_type: str, where: str) -> None:
+    """`anim` is eyecut's own key, applied after the compile like `mask`.
+
+    The slug itself is left to the CLI (see ANIM_OPTIONS); what is caught here is
+    the shape, because every mistake in it produces a draft that opens looking
+    exactly like one nobody asked to animate.
+    """
+    if track_type not in ("video", "text"):
+        raise SpecError(f"{where}: `anim` only applies to video and text items, not "
+                        f"{track_type} (an audio segment has nothing to animate)")
+    if not isinstance(anim, dict) or not anim:
+        raise SpecError(f"{where}: `anim` must be a non-empty object of "
+                        f"intro/outro/combo, got {anim!r}")
+    for key, value in anim.items():
+        if key not in ANIM_OPTIONS:
+            raise SpecError(f"{where}: unknown animation key {key!r}. "
+                            f"One of: {', '.join(ANIM_OPTIONS)}")
+        if key in ANIM_SLOTS:
+            if track_type == "text" and key not in ANIM_TEXT_SLOTS:
+                raise SpecError(f"{where}: `{key}` is a video animation — "
+                                f"`capcut text-anim` takes only "
+                                f"{' and '.join(ANIM_TEXT_SLOTS)}")
+            if not isinstance(value, str) or not value:
+                raise SpecError(f"{where}: animation `{key}` must be a slug string, "
+                                f"got {value!r}. List them with `capcut enums "
+                                f"--text-intros` and friends.")
+        elif not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise SpecError(f"{where}: animation `{key}` must be a number of "
+                            f"seconds, got {value!r}")
+    for slot, duration in ANIM_SLOTS.items():
+        if duration in anim and slot not in anim:
+            raise SpecError(f"{where}: `{duration}` without `{slot}` animates "
+                            f"nothing — the duration belongs to a slug that is "
+                            f"not there.")
+
+
 def _check_text_style(style: Any, track_type: str, where: str) -> None:
     """`textStyle` is eyecut's own key, like `mask`: applied after the compile.
 
@@ -292,6 +346,8 @@ def validate_spec(spec: dict[str, Any]) -> None:
                 _check_mask(item["mask"], track.get("type", "video"), where)
             if item.get("textStyle") is not None:
                 _check_text_style(item["textStyle"], track.get("type", "video"), where)
+            if item.get("anim") is not None:
+                _check_anim(item["anim"], track.get("type", "video"), where)
     refs = _refs(spec)
 
     for index, op in enumerate(spec.get("operations") or []):
