@@ -284,3 +284,39 @@ def test_filters_and_effects_get_tracks_of_their_own(tmp_path, drafts_dir, monke
     assert all(m.get("effect_id") or m.get("resource_id")
                for m in built["materials"]["video_effects"]), "slugs must resolve to ids"
     assert draft.duration_us == 8_000_000
+
+
+@capcut_cli
+def test_a_speed_change_reaches_the_material_the_app_actually_reads(tmp_path, drafts_dir,
+                                                                    monkeypatch):
+    """compile writes `segment.speed` and leaves the segment's speed material at 1.
+    CapCut reads the material, so a clip asked for 2x plays at 1x while its trim is
+    still cut for 2x -- an edit that is wrong in a way that looks like bad footage.
+    `capcut lint` catches it (`speed-material-mismatch`) but cannot fix it, so
+    write_draft re-syncs each one [proven].
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-speed", "tracks": [{"type": "video", "items": [
+        {"path": str(source), "start": 0, "duration": 2, "sourceStart": 0, "speed": 2.0},
+        {"path": str(source), "start": 2, "duration": 4, "sourceStart": 8, "speed": 0.5},
+        {"path": str(source), "start": 6, "duration": 2, "sourceStart": 14}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    speeds = {m["id"]: m["speed"] for m in built["materials"]["speeds"]}
+    segments = [s for t in built["tracks"] for s in t["segments"]]
+    for segment in segments:
+        material = next(speeds[r] for r in segment["extra_material_refs"] if r in speeds)
+        assert material == segment["speed"], "the material is what CapCut plays"
+    assert [s["speed"] for s in segments] == [2, 0.5, 1]
+
+    # the re-sync must not disturb the trim: 2x consumes twice the source
+    assert [(s["source_timerange"]["duration"], s["target_timerange"]["duration"])
+            for s in segments] == [(4_000_000, 2_000_000), (2_000_000, 4_000_000),
+                                   (2_000_000, 2_000_000)]
+    assert draft.duration_us == 8_000_000

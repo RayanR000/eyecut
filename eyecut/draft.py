@@ -141,6 +141,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     if code != 0:
         raise CompileError(f"capcut register failed ({code}): {stderr.strip()}")
 
+    warnings += resync_speeds(project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
     clear_inherited_media(meta_path)
@@ -151,6 +152,45 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     set_timeline_duration(meta_path, duration_us)
     return Draft(path=project_dir, duration_us=duration_us, registration=registration,
                  template=template, warnings=warnings)
+
+
+def resync_speeds(project_dir: Path, *, runner=_capcut_runner,
+                  store: Path | None = None) -> list[str]:
+    """Make a segment's speed material agree with the segment.
+
+    `compile` writes `segment.speed` and leaves the segment's `speed` material at
+    1. **CapCut reads the material**, so a clip asked to run at 2x plays at normal
+    speed while its trim is still cut for 2x -- the edit is wrong in a way that
+    looks like the footage is wrong. `capcut lint` reports it as
+    `speed-material-mismatch` and cannot auto-fix it; `capcut speed <segment> <n>`
+    re-syncs both, and leaves source and target timeranges alone [verified].
+
+    Returns a warning per segment it could not repair, rather than raising: a
+    draft with one unfixed speed is still worth opening.
+    """
+    draft_info = project_dir / "draft_info.json"
+    data = json.loads(draft_info.read_text())
+    speeds = {m["id"]: m for m in data.get("materials", {}).get("speeds", [])}
+    store = store or project_dir.parent
+
+    mismatched = []
+    for track in data.get("tracks", []):
+        for segment in track.get("segments", []):
+            wanted = segment.get("speed", 1)
+            for ref in segment.get("extra_material_refs", []):
+                material = speeds.get(ref)
+                if material is not None and material.get("speed") != wanted:
+                    mismatched.append((segment["id"], wanted))
+                    break
+
+    warnings = []
+    for segment_id, wanted in mismatched:
+        code, stderr = runner(["capcut", "speed", str(project_dir), segment_id,
+                               str(wanted)], store)
+        if code != 0:
+            warnings.append(f"speed {wanted}x on segment {segment_id[:8]} could not be "
+                            f"applied ({stderr.strip()[:120]}); CapCut will play it at 1x")
+    return warnings
 
 
 def mirror_timeline(project_dir: Path) -> list[Path]:
