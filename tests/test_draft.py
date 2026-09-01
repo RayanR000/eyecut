@@ -203,3 +203,55 @@ def test_the_source_in_point_is_sourceStart_not_start(tmp_path, drafts_dir, monk
         {"start": 0, "duration": 2_000_000},
         {"start": 2_000_000, "duration": 3_000_000}]
     assert draft.duration_us == 5_000_000, "timeline is the sum of the clips, not the last in-point"
+
+
+@capcut_cli
+def test_audio_text_transitions_and_keyframes_all_reach_the_draft(tmp_path, drafts_dir,
+                                                                  monkeypatch):
+    """Most of CapCut is reachable through the spec compile already takes; what was
+    missing was anyone checking. Audio and text tracks, a transition, an animated
+    keyframe pair and an audio fade in one draft, asserted on disk -- especially
+    the keyframe's real values, since the wrong spelling writes nulls that lint
+    reports as clean [proven].
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    tone = tmp_path / "bed.wav"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=8",
+                    str(tone)], capture_output=True, check=True)
+    spec = {"name": "eyecut-rich", "tracks": [
+        {"type": "video", "items": [
+            {"path": str(source), "start": 0, "duration": 4, "sourceStart": 2, "ref": "shot0"},
+            {"path": str(source), "start": 4, "duration": 4, "sourceStart": 12, "ref": "shot1"}]},
+        {"type": "audio", "items": [
+            {"path": str(tone), "start": 0, "duration": 8, "volume": 0.25, "ref": "bed"}]},
+        {"type": "text", "items": [
+            {"text": "TITLE", "start": 0, "duration": 3, "fontSize": 24, "color": "#FFD700"}]}],
+        "operations": [
+            {"op": "transition", "target": "shot0", "slug": "dissolve", "duration": 0.5},
+            {"op": "keyframe", "target": "shot1", "property": "uniform_scale",
+             "time": 0.0, "value": 1.0},
+            {"op": "keyframe", "target": "shot1", "property": "uniform_scale",
+             "time": 4.0, "value": 1.15, "easing": "ease-in-out"},
+            {"op": "audio-fade", "target": "bed", "fadeIn": 0.2, "fadeOut": 0.8}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    assert {t["type"] for t in built["tracks"]} >= {"video", "audio", "text"}
+    assert len(built["materials"]["transitions"]) == 1
+    assert len(built["materials"]["audio_fades"]) == 1
+
+    keyframes = [k for t in built["tracks"] for s in t["segments"]
+                 for k in (s.get("common_keyframes") or [])]
+    assert len(keyframes) == 1, "both points belong to one property's keyframe list"
+    points = [(p["time_offset"], p["values"]) for p in keyframes[0]["keyframe_list"]]
+    assert points == [(0, [1.0]), (4_000_000, [1.15])], "a from/to spec writes nulls here"
+
+    # the audio source is registered the same way the video is -- no relink prompt
+    meta = json.loads((draft.path / "draft_meta_info.json").read_text())
+    registered = {e["file_Path"] for g in meta["draft_materials"] for e in g["value"]}
+    assert registered == {"./assets/video/a.mp4", "./assets/audio/bed.wav"}

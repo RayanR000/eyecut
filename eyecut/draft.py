@@ -23,6 +23,7 @@ from eyecut import media
 from eyecut.media import (MediaProbe, Registration, groups_of, probe,
                           register_media, set_timeline_duration,
                           timeline_duration_us, write_meta)
+from eyecut.spec import validate_spec
 from eyecut.template import find_template
 
 
@@ -102,9 +103,14 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     registration below reads the copies back out of the compiled timeline.
 
     The CapCut-is-running guard runs *before* the compile so a refused write
-    leaves no half-built project behind.
+    leaves no half-built project behind, and `validate_spec` runs before that: a
+    spec compile would accept but silently mis-build (a `from`/`to` keyframe) is
+    caught while rejecting it still costs nothing.
     """
     project_dir = Path(project_dir)
+    # Before the running-CapCut guard and before anything is written: a spec that
+    # would compile into the wrong thing is cheapest to reject here.
+    validate_spec(spec)
     if media.capcut_is_running():   # via the module, so the guard stays patchable
         raise RuntimeError("CapCut is running — it overwrites draft_meta_info.json on quit. "
                            "Quit CapCut and re-run.")

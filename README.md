@@ -24,6 +24,7 @@ you.
 |---|---|
 | `eyecut.timeline` | Edit an existing draft's timeline **in place**, with the rules enforced on save. |
 | `eyecut.draft` | Build a draft from a spec via `capcut-cli compile`, then finish what the compiler leaves undone. |
+| `eyecut.spec` | Reject a spec compile would accept but silently mis-build. |
 | `eyecut.media` | Register media in `draft_meta_info.json` so CapCut does not prompt to relink. |
 | `eyecut.frames` | Extract JPEGs and contact sheets from a source, plus what makes it unusable. |
 | `eyecut.shots` | Build a browsable shot picker for a source file. |
@@ -86,6 +87,42 @@ for start_s, end_s in spans:                 # in-points into the source
 
 write_draft({"name": "MY_PROJECT", "tracks": [{"type": "video", "items": items}]},
             store / "MY_PROJECT", [probe_media(src)])
+```
+
+### What the spec reaches
+
+Everything `capcut compile` takes, because `write_draft` passes the spec straight
+through: video, **audio** and **text** tracks, and nine operations targeted at
+items by `ref` — `transition`, `filter`, `effect`, `keyframe`, `audio-fade`,
+`text-style`, `text-ranges`, `template`, `captions`. eyecut renames nothing, so a
+feature capcut-cli gains arrives here for free.
+
+`validate_spec` runs before the compile and rejects what compile accepts but
+mis-builds. Each rule below is a mistake that cost a real debugging session:
+
+| Rule | What goes wrong without it |
+|---|---|
+| Keyframes are one operation per point, each with `time` and `value` | `from`/`to` compiles, lints clean, and writes `time_offset: null, values: [null]` — an animation that does nothing |
+| A whole-frame zoom is `uniform_scale` | `scale` is not one of the 11 property names |
+| Easings are hyphenated: `ease-in-out` | `ease_in_out` is rejected, but only after the draft directory exists |
+| `audio-fade` targets an audio item | Same: a failed build that leaves an orphan folder |
+| `text-style` is refused outright | It crashes capcut-cli 0.21.1: `Cannot read properties of undefined (reading 'alpha')`. Set `fontSize` and `color` on the text item instead |
+| Items on one track may not overlap | The detectable half of the `start`/`sourceStart` mistake above |
+
+```python
+spec = {"name": "MY_PROJECT", "tracks": [
+    {"type": "video", "items": [
+        {"path": src, "start": 0, "duration": 4, "sourceStart": 120, "ref": "shot0"}]},
+    {"type": "audio", "items": [
+        {"path": music, "start": 0, "duration": 4, "volume": 0.25, "ref": "bed"}]},
+    {"type": "text", "items": [
+        {"text": "TITLE", "start": 0, "duration": 3, "fontSize": 24, "color": "#FFD700"}]}],
+  "operations": [
+    {"op": "transition", "target": "shot0", "slug": "dissolve", "duration": 0.5},
+    {"op": "keyframe", "target": "shot0", "property": "uniform_scale", "time": 0, "value": 1.0},
+    {"op": "keyframe", "target": "shot0", "property": "uniform_scale", "time": 4, "value": 1.15,
+     "easing": "ease-in-out"},
+    {"op": "audio-fade", "target": "bed", "fadeIn": 0.2, "fadeOut": 0.8}]}
 ```
 
 ## Command line
