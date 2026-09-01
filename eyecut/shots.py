@@ -54,6 +54,25 @@ def probe(path: Path) -> tuple[float, float]:
     return float(num) / float(den), float(st["duration"])
 
 
+def detect_shots(source: str | Path, *, threshold: float = 0.4,
+                 min_gap: float = 2.0) -> list[tuple[float, float]]:
+    """Shot windows for `source`, via `capcut detect-scenes`.
+
+    Detection is a sampling aid, not a substitute for looking: four automatic
+    clip-selection metrics lost to a human reading the frames. This only decides
+    where to cut the strip, never which shot is good.
+    """
+    out = subprocess.run(["capcut", "detect-scenes", str(source),
+                          "--threshold", str(threshold), "--min-gap", str(min_gap), "--json"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError(f"capcut detect-scenes failed: {out.stderr.strip()[:300]}")
+    spans = [(s["start"], s["end"]) for s in json.loads(out.stdout).get("segments", [])]
+    if not spans:
+        raise RuntimeError(f"no shots detected in {source}; pass windows explicitly")
+    return spans
+
+
 def read_windows(path: Path) -> list[tuple[float, float]]:
     """Shot windows, one `start end` pair of seconds per line."""
     out = []
@@ -138,7 +157,8 @@ def main(argv=None) -> int:
     ap.add_argument("source", type=Path)
     ap.add_argument("--windows", type=Path,
                     help="shot windows file ('start end' seconds per line). "
-                         "Defaults to <source-dir>/free_<stem>.txt")
+                         "Defaults to <source-dir>/free_<stem>.txt, and to scene "
+                         "detection when no such file exists")
     ap.add_argument("--out", type=Path, help="output dir (default ./browser/<stem>)")
     ap.add_argument("--title", help="label shown in the page header")
     ap.add_argument("-q", "--quiet", action="store_true")
@@ -148,13 +168,13 @@ def main(argv=None) -> int:
         print(f"no such source: {a.source}", file=sys.stderr)
         return 1
     win = a.windows or a.source.parent / f"free_{a.source.stem}.txt"
-    if not Path(win).exists():
-        print(f"no windows file: {win}\n"
-              f"one 'start end' pair of seconds per line, one line per shot",
-              file=sys.stderr)
+    try:
+        windows = read_windows(win) if Path(win).exists() else detect_shots(a.source)
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
         return 1
     out = a.out or Path("browser") / a.source.stem
-    build(a.source, read_windows(win), out, title=a.title, quiet=a.quiet)
+    build(a.source, windows, out, title=a.title, quiet=a.quiet)
     return 0
 
 

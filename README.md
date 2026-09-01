@@ -6,6 +6,18 @@ The point of this repo is that the hard-won rules about CapCut's draft format li
 in code with tests, not in a notes file somebody has to remember to read. Every
 check in `eyecut.timeline` stands for a bug that already cost real work once.
 
+## The MCP surface
+
+Two tools. The test is not "is it useful" but "can Claude do it another way":
+Claude has a shell, so frame extraction, shot browsing and proxy rendering are a
+few lines of ffmpeg and stay CLIs. Writing CapCut's format is what no shell gets
+you.
+
+| Tool | What it does |
+|---|---|
+| `register_media` | Write the entries that stop CapCut prompting to relink. |
+| `write_draft` | Compile a spec into a draft that opens ready to adjust. |
+
 ## Modules
 
 | Module | What it does |

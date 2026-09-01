@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from eyecut import frames as fr
-from eyecut import server as srv
 
 
 @pytest.fixture
@@ -81,10 +80,10 @@ def test_a_missing_file_is_an_error(tmp_path):
         fr.extract_frames(tmp_path / "nope.mp4")
 
 
-def test_the_tool_is_registered_and_returns_json_able_paths(clip, tmp_path):
-    import asyncio
-    names = {t.name for t in asyncio.run(srv.server.list_tools())}
-    assert "extract_frames" in names
-    got = srv.extract_frames(str(clip), times=[2.0], out=str(tmp_path / "f"), sheets=False)
-    assert got["frames"] and Path(got["frames"][0]).exists()
-    assert got["codec"] == "h264" and got["size"] == [320, 240]
+def test_the_cli_prints_the_sheets_it_wrote(clip, tmp_path, capsys):
+    """A CLI, not an MCP tool: Claude has a shell, and anything a shell can do in a
+    few lines of ffmpeg does not earn a place on the tool surface."""
+    code = fr.main([str(clip), "--every", "2", "-o", str(tmp_path / "f")])
+    printed = capsys.readouterr().out.split()
+    assert code == 0
+    assert printed and all(Path(p).exists() for p in printed)

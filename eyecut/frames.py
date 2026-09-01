@@ -13,7 +13,7 @@ it. All three of these were hit in one prototype session:
 * watermarks cluster in the first and last seconds — so the sampler reports those
   windows rather than trying to detect a logo.
 
-Sampling only. Shot *detection* lives in `eyecut.server.detect_shots`, and the
+Sampling only. Shot *detection* lives in `eyecut.shots.detect_shots`, and the
 spec is explicit that it is a sampling aid, not a detector.
 """
 from __future__ import annotations
@@ -169,3 +169,31 @@ def extract_frames(source: Path | str, *, times: list[float] | None = None,
             else:
                 warnings.append(f"could not tile sheet {idx}")
     return result
+
+
+def main(argv=None) -> int:
+    import argparse, sys
+    ap = argparse.ArgumentParser(description="Extract JPEGs and contact sheets from a video.")
+    ap.add_argument("source")
+    ap.add_argument("-o", "--out", help="output dir (default ./frames/<name>)")
+    ap.add_argument("--times", type=float, nargs="+", help="seconds to sample")
+    ap.add_argument("--every", type=float, help="sample every N seconds")
+    ap.add_argument("--no-sheets", action="store_true", help="skip the contact sheets")
+    a = ap.parse_args(argv)
+    try:
+        got = extract_frames(a.source, times=a.times, every=a.every, out=a.out,
+                             sheets=not a.no_sheets)
+    except (ExtractError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    for problem in got.unusable:
+        print(f"unusable: {problem}", file=sys.stderr)
+    for warning in got.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    for path in got.sheets or got.frames:
+        print(path)
+    return 1 if got.unusable else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
