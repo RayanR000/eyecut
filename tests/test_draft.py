@@ -466,3 +466,31 @@ def test_a_saved_template_carries_its_style_and_takes_new_text(tmp_path, drafts_
 
     captions = next(t for t in built["tracks"] if t["type"] == "text")
     assert [s["target_timerange"]["start"] for s in captions["segments"]] == [0, 4_000_000]
+
+
+def test_a_big_file_in_the_template_does_not_land_in_every_draft(tmp_path):
+    """Compile copies the template folder wholesale. `clear_inherited_media`
+    un-registers what came with it but leaves the bytes, so a large source in the
+    template put an unreferenced copy inside every draft compiled against it
+    [proven -- five sukuna drafts holding 5.5 GB of a test movie none referenced,
+    found only because each draft was 1.1 GB].
+    """
+    from eyecut.draft import prune_inherited_assets
+
+    project = tmp_path / "proj"
+    (project / "assets" / "video").mkdir(parents=True)
+    used = project / "assets" / "video" / "used.mp4"
+    inherited = project / "assets" / "video" / "Sintel.2010.1080p.mkv"
+    caption = project / "assets" / "captions.srt"
+    for f in (used, inherited, caption):
+        f.write_bytes(b"x" * 16)
+    (project / "draft_info.json").write_text(json.dumps(
+        {"materials": {"videos": [{"path": str(used)}]},
+         "tracks": [{"type": "text", "segments": [{"srt": "./assets/captions.srt"}]}]}))
+
+    removed = prune_inherited_assets(project, [used])
+
+    assert not inherited.exists(), "the template's media is gone"
+    assert used.exists(), "the media this timeline uses survives"
+    assert caption.exists(), "anything draft_info.json names survives, however reached"
+    assert len(removed) == 1 and "Sintel" in removed[0], removed

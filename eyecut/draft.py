@@ -149,6 +149,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     copied = timeline_media(project_dir / "draft_info.json")
     registration = register_media(
         meta_path, [replace(probe(actual), path=relative) for actual, relative in copied])
+    warnings += prune_inherited_assets(project_dir, [actual for actual, _ in copied])
     duration_us = timeline_duration_us(project_dir / "draft_info.json")
     set_timeline_duration(meta_path, duration_us)
     return Draft(path=project_dir, duration_us=duration_us, registration=registration,
@@ -359,3 +360,37 @@ def clear_inherited_media(meta_path: Path) -> None:
     for group in groups_of(meta):
         group["value"] = []
     write_meta(meta_path, meta)
+
+
+def prune_inherited_assets(project_dir: Path, keep: list[Path]) -> list[str]:
+    """Delete the template's media that compile copied into this draft.
+
+    `clear_inherited_media` drops the template's `draft_materials` on the
+    assumption that the files behind them are "usually long gone from disk".
+    When they are not, the bytes stay: compile copies the template folder
+    wholesale, so a large source sitting in the template lands an unreferenced
+    copy inside *every* draft compiled against it. Clearing the registration
+    hides it from CapCut's media panel and leaves the disk cost behind [proven
+    -- five drafts holding 5.5 GB of a test movie none of them referenced,
+    noticed only because each draft was 1.1 GB].
+
+    Conservative on purpose: only files under the draft's own `assets/`, and
+    only those neither in `keep` nor named anywhere in `draft_info.json`, so
+    media reached by a route the timeline scan does not model survives.
+    """
+    project_dir = Path(project_dir)
+    assets = project_dir / "assets"
+    if not assets.is_dir():
+        return []
+    info_path = project_dir / "draft_info.json"
+    info = info_path.read_text() if info_path.is_file() else ""
+    keep_real = {Path(k).resolve() for k in keep}
+    removed = []
+    for path in sorted(assets.rglob("*")):
+        if not path.is_file() or path.resolve() in keep_real or path.name in info:
+            continue
+        size = path.stat().st_size
+        path.unlink()
+        removed.append("removed inherited media not in this timeline: "
+                       f"{path.name} ({size / 1e6:.0f} MB)")
+    return removed
