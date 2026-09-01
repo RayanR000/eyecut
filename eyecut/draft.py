@@ -23,7 +23,7 @@ from eyecut import media
 from eyecut.media import (MediaProbe, Registration, groups_of, probe,
                           register_media, set_timeline_duration,
                           timeline_duration_us, write_meta)
-from eyecut.spec import validate_spec
+from eyecut.spec import MASK_FLAGS, MASK_OPTIONS, validate_spec
 from eyecut.template import find_template
 
 
@@ -142,6 +142,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
         raise CompileError(f"capcut register failed ({code}): {stderr.strip()}")
 
     warnings += resync_speeds(project_dir, runner=runner, store=store)
+    warnings += apply_masks(spec, project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
     clear_inherited_media(meta_path)
@@ -152,6 +153,60 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     set_timeline_duration(meta_path, duration_us)
     return Draft(path=project_dir, duration_us=duration_us, registration=registration,
                  template=template, warnings=warnings)
+
+
+def _mask_argv(mask: str | dict, project_dir: Path, segment_id: str) -> list[str]:
+    settings = {"slug": mask} if isinstance(mask, str) else dict(mask)
+    argv = ["capcut", "mask", str(project_dir), segment_id, settings.pop("slug")]
+    for key, value in settings.items():
+        if key in MASK_FLAGS:
+            if value:
+                argv.append(f"--{key}")
+        else:
+            argv += [MASK_OPTIONS[key], str(value)]
+    return argv
+
+
+def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                store: Path | None = None) -> list[str]:
+    """Apply each item's `mask` to the segment compile made for it.
+
+    Masks are the one part of the spec that is eyecut's own: compile has no mask
+    operation at all, so this shells out to `capcut mask` afterwards, the way
+    `resync_speeds` repairs speed.
+
+    Items are matched to segments by position -- the nth item of the spec's nth
+    track of a type is the nth segment of the built track of that type. Compile
+    preserves both orders, and the filter/effect tracks it appends carry no items
+    to confuse the count. If the counts disagree the masks are skipped with a
+    warning rather than guessed at: a mask on the wrong shot is worse than none.
+    """
+    wanted = [(track.get("type", "video"), index, item["mask"])
+              for track in spec.get("tracks") or []
+              for index, item in enumerate(track.get("items") or [])
+              if item.get("mask") is not None]
+    if not wanted:
+        return []
+
+    built = json.loads((project_dir / "draft_info.json").read_text())
+    segments: dict[tuple[str, int], str] = {}
+    for track in built.get("tracks", []):
+        for index, segment in enumerate(track.get("segments", [])):
+            segments[(track["type"], index)] = segment["id"]
+
+    store = store or project_dir.parent
+    warnings = []
+    for track_type, index, mask in wanted:
+        segment_id = segments.get((track_type, index))
+        if segment_id is None:
+            warnings.append(f"mask on {track_type} item {index} skipped: compile "
+                            f"produced no matching segment")
+            continue
+        code, stderr = runner(_mask_argv(mask, project_dir, segment_id), store)
+        if code != 0:
+            warnings.append(f"mask on {track_type} item {index} failed: "
+                            f"{stderr.strip()[:120]}")
+    return warnings
 
 
 def resync_speeds(project_dir: Path, *, runner=_capcut_runner,

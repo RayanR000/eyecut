@@ -103,6 +103,17 @@ filters, 9 masks. List them with `capcut enums --scene-effects` and friends.
 Choosing one by name is easy; identifying which one made the flash in someone
 else's video is not, and remains out of scope.
 
+Two things `write_draft` finishes after the compile, because compile does not:
+**speed** (it writes `segment.speed` but leaves the speed material at 1, and the
+app reads the material) and **masks** (compile has no mask operation at all, so
+`mask` is the one key eyecut adds to compile's vocabulary — nine shapes, applied
+with `capcut mask` and matched to the segment by position).
+
+```python
+{"path": src, "start": 0, "duration": 2, "sourceStart": 120, "speed": 2.0}
+{"path": src, "start": 2, "duration": 4, "mask": {"slug": "circle", "size": 0.7}}
+```
+
 `validate_spec` runs before the compile and rejects what compile accepts but
 mis-builds. Each rule below is a mistake that cost a real debugging session:
 

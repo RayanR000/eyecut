@@ -320,3 +320,34 @@ def test_a_speed_change_reaches_the_material_the_app_actually_reads(tmp_path, dr
             for s in segments] == [(4_000_000, 2_000_000), (2_000_000, 4_000_000),
                                    (2_000_000, 2_000_000)]
     assert draft.duration_us == 8_000_000
+
+
+@capcut_cli
+def test_a_mask_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_dir, monkeypatch):
+    """`mask` is the one key eyecut adds to compile's vocabulary, because compile
+    has no mask operation: it is applied afterwards with `capcut mask`, matched to
+    the segment by position. The second clip is masked and the first is not, so a
+    mask applied to the wrong segment fails this test.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-mask", "tracks": [{"type": "video", "items": [
+        {"path": str(source), "start": 0, "duration": 4, "sourceStart": 0},
+        {"path": str(source), "start": 4, "duration": 4, "sourceStart": 8,
+         "mask": {"slug": "circle", "size": 0.6, "invert": True}}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == []
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    masks = built["materials"]["common_mask"]
+    assert [m["name"] for m in masks] == ["Circle"]
+    assert masks[0]["config"]["invert"] is True
+
+    segments = [s for t in built["tracks"] for s in t["segments"]]
+    masked = [s for s in segments if masks[0]["id"] in s.get("extra_material_refs", [])]
+    assert len(masked) == 1
+    assert masked[0]["target_timerange"]["start"] == 4_000_000, "the second clip, not the first"

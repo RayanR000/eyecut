@@ -39,6 +39,18 @@ AUDIO_ONLY = ("audio-fade",)
 # `duration` + `slug`, and no target. They get a track of their own in the draft.
 SPANNING = ("filter", "effect")
 
+# `capcut enums --masks`. Masks are the one thing here compile does NOT do: there
+# is no mask operation, so `mask` is eyecut's own item key, applied after the
+# compile with `capcut mask <segment> <slug>`. The rest of the spec stays
+# compile's vocabulary verbatim.
+MASK_SLUGS = ("split", "filmstrip", "circle", "rectangle", "stars", "heart",
+              "text", "brush", "pen")
+# `capcut mask` option names, keyed by the spec key that carries them
+MASK_OPTIONS = {"centerX": "--center-x", "centerY": "--center-y", "size": "--size",
+                "rotation": "--rotation", "feather": "--feather",
+                "rectWidth": "--rect-width", "roundCorner": "--round-corner"}
+MASK_FLAGS = ("invert",)
+
 # `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
 # "Cannot read properties of undefined (reading 'alpha')". Refused here with an
 # explanation rather than passed through to crash. Drop this when upstream fixes
@@ -131,6 +143,28 @@ def _check_span(op: dict, where: str) -> None:
                         f"what the CapCut UI can express.")
 
 
+def _check_mask(mask: Any, track_type: str, where: str) -> None:
+    if track_type != "video":
+        raise SpecError(f"{where}: `mask` only applies to video items, not "
+                        f"{track_type} (it is applied with `capcut mask`, which "
+                        f"needs a visual segment)")
+    slug = mask if isinstance(mask, str) else mask.get("slug") if isinstance(mask, dict) else None
+    if slug not in MASK_SLUGS:
+        raise SpecError(f"{where}: unknown mask {slug!r}. "
+                        f"One of: {', '.join(MASK_SLUGS)}")
+    if not isinstance(mask, dict):
+        return
+    for key, value in mask.items():
+        if key == "slug" or key in MASK_FLAGS:
+            continue
+        if key not in MASK_OPTIONS:
+            raise SpecError(f"{where}: unknown mask option {key!r}. "
+                            f"One of: {', '.join(MASK_OPTIONS)}, "
+                            f"{', '.join(MASK_FLAGS)}")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise SpecError(f"{where}: mask `{key}` must be a number, got {value!r}")
+
+
 def validate_spec(spec: dict[str, Any]) -> None:
     """Raise `SpecError` if `spec` would not build what it appears to say."""
     if not isinstance(spec, dict):
@@ -139,6 +173,11 @@ def validate_spec(spec: dict[str, Any]) -> None:
         raise SpecError("spec.tracks is required and must hold at least one track")
 
     _check_overlaps(spec)
+    for track_index, track in enumerate(spec.get("tracks") or []):
+        for item_index, item in enumerate(track.get("items") or []):
+            if item.get("mask") is not None:
+                _check_mask(item["mask"], track.get("type", "video"),
+                            f"tracks[{track_index}].items[{item_index}]")
     refs = _refs(spec)
 
     for index, op in enumerate(spec.get("operations") or []):
