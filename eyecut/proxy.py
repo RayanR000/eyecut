@@ -31,10 +31,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# CapCut writes media paths through this token; it expands to the draft folder.
+PLACEHOLDER = re.compile(r"^##_draftpath_placeholder_[0-9A-Fa-f-]+_##/")
 
 DRAFT_STORE = Path.home() / "Movies/CapCut/User Data/Projects/com.lveditor.draft"
 W, H = 854, 480
@@ -42,6 +46,31 @@ W, H = 854, 480
 # Keyframe properties this renderer understands. CapCut misspells some of its own
 # names (KFTypeHightLight, KFTypeLightSensatione); these four are spelled normally.
 XFORM_KEYS = ("KFTypeScale", "KFTypePositionX", "KFTypePositionY", "KFTypeBrightness")
+
+
+def asset_path(draft: Path, material: dict) -> Path | None:
+    """Where a material's file actually is, or None if it cannot be found.
+
+    A material names its file three different ways depending on who wrote the
+    draft: CapCut's own `##_draftpath_placeholder_<uuid>_##/assets/...`, a plain
+    absolute path, or nothing useful at all. Assuming `assets/<material_name>`
+    covers only the flattest case -- `capcut compile` files video under
+    `assets/video/`, so a draft eyecut built failed to render at all [proven].
+    """
+    raw = material.get("path") or ""
+    if PLACEHOLDER.match(raw):
+        candidate = draft / PLACEHOLDER.sub("", raw)
+        if candidate.exists():
+            return candidate
+    if raw and Path(raw).is_absolute() and Path(raw).exists():
+        return Path(raw)
+    stem = Path(raw).name or (material.get("material_name") or material.get("name") or "")
+    if not stem:
+        return None
+    flat = draft / "assets" / stem
+    if flat.exists():
+        return flat
+    return next((p for p in (draft / "assets").rglob(stem) if p.is_file()), None)
 
 
 def probe_fps(path: Path) -> float:
@@ -81,6 +110,8 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
     fps = float(d.get("fps") or 30)
     name = {m["id"]: (m.get("material_name") or m.get("name", ""))
             for m in d["materials"]["videos"]}
+    located = {(m.get("material_name") or m.get("name", "")): asset_path(P, m)
+               for m in d["materials"]["videos"]}
     video_tracks = [t for t in d["tracks"] if t.get("type") == "video"]
     if not video_tracks:
         raise RuntimeError("draft has no video track")
@@ -94,9 +125,10 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
     src_fps: dict[str, float] = {}
     jobs = []
     for f in files:
-        path = P / "assets" / f
-        if not path.exists():
-            raise FileNotFoundError(f"draft references missing asset: {path}")
+        path = located.get(f)
+        if path is None or not path.exists():
+            raise FileNotFoundError(
+                f"draft references a file that is not in {P / 'assets'}: {f}")
         src_fps[f] = probe_fps(path)
         dst = tmp / f.replace(".", "_")
         if reuse_cache and dst.is_dir() and len(list(dst.iterdir())) > 100:
@@ -226,9 +258,11 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
                       key=lambda s: s["target_timerange"]["start"])[0]
         amat = {m["id"]: (m.get("material_name") or m.get("name") or m.get("path", ""))
                 for m in d["materials"].get("audios", [])}
+        amaterial = next((m for m in d["materials"].get("audios", [])
+                          if m.get("id") == aseg.get("material_id")), {})
         afile = Path(amat.get(aseg.get("material_id"), "")).name
-        apath = P / "assets" / afile
-        if afile and apath.exists():
+        apath = asset_path(P, amaterial) if amaterial else None
+        if afile and apath and apath.exists():
             a0 = aseg["source_timerange"]["start"] / 1e6
             adur = aseg["target_timerange"]["duration"] / 1e6
             cmd += ["-ss", f"{a0:.6f}", "-t", f"{adur:.6f}", "-i", str(apath)]
