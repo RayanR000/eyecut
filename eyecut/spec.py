@@ -74,25 +74,45 @@ def _refs(spec: dict) -> dict[str, str]:
 
 
 def _check_overlaps(spec: dict) -> None:
-    """Two items overlapping *on one track*. Tracks of different types overlap by
-    design -- an audio bed runs under every video segment -- so this is per track.
+    """Items overlapping on one track — *after* compile merges tracks.
+
+    Two tracks of the same type collapse into one unless each carries a distinct
+    `name`: compile keys the built track on (type, name), and an unnamed track
+    takes the default. So a spec that reads as a base track plus an overlay
+    silently becomes one track with segments on top of each other — the main-track
+    corruption `eyecut.timeline` exists to prevent, and `capcut lint` calls it
+    clean [proven].
+
+    Tracks of different types overlap by design: an audio bed runs under every
+    video segment, and captions run over them.
     """
+    merged: dict[tuple[str, str], list[tuple[float, float, int]]] = {}
     for index, track in enumerate(spec.get("tracks") or []):
-        placed = []
+        track_type = track.get("type", "video")
+        key = (track_type, track.get("name") or "")
         for item in track.get("items") or []:
-            start = item.get("start")
-            duration = item.get("duration")
+            start, duration = item.get("start"), item.get("duration")
             if not isinstance(start, (int, float)) or not isinstance(duration, (int, float)):
                 continue
-            placed.append((start, start + duration))
+            merged.setdefault(key, []).append((start, start + duration, index))
+
+    for (track_type, name), placed in merged.items():
         placed.sort()
-        for (a_start, a_end), (b_start, b_end) in zip(placed, placed[1:]):
-            if b_start < a_end - 1e-9:
+        for (a_start, a_end, a_track), (b_start, b_end, b_track) in zip(placed, placed[1:]):
+            if b_start >= a_end - 1e-9:
+                continue
+            if a_track != b_track:
                 raise SpecError(
-                    f"tracks[{index}] ({track.get('type', 'video')}): items overlap — "
-                    f"{a_start:g}–{a_end:g}s and {b_start:g}–{b_end:g}s. `start` is the "
-                    f"TIMELINE position; the in-point into the source file is "
-                    f"`sourceStart`.")
+                    f"tracks[{a_track}] and tracks[{b_track}] are both {track_type} "
+                    f"tracks named {name!r}, so compile merges them into one — and "
+                    f"{a_start:g}–{a_end:g}s then overlaps {b_start:g}–{b_end:g}s. "
+                    f"Give each track a distinct `name` to keep them apart (that is "
+                    f"how an overlay or picture-in-picture is built).")
+            raise SpecError(
+                f"tracks[{a_track}] ({track_type}): items overlap — "
+                f"{a_start:g}–{a_end:g}s and {b_start:g}–{b_end:g}s. `start` is the "
+                f"TIMELINE position; the in-point into the source file is "
+                f"`sourceStart`.")
 
 
 def _check_keyframe(op: dict, where: str) -> None:

@@ -355,3 +355,65 @@ def test_a_mask_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_dir, m
     # `capcut mask` leaves this empty; a CapCut-authored mask carries a UUID, and
     # the shape was captured by hand from the app to find that out.
     assert masks[0]["constant_material_id"], "must match what CapCut writes for its own"
+
+
+@capcut_cli
+def test_a_named_second_video_track_becomes_an_overlay(tmp_path, drafts_dir, monkeypatch):
+    """Two video tracks stay two only if each carries a distinct `name` -- compile
+    keys the built track on (type, name). With names, the second track is an
+    overlay and `scale`/`x`/`y` place it; without them both clips land on one
+    track on top of each other, which lints clean [proven].
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-pip", "tracks": [
+        {"type": "video", "name": "main", "items": [
+            {"path": str(source), "start": 0, "duration": 6, "sourceStart": 0}]},
+        {"type": "video", "name": "overlay", "items": [
+            {"path": str(source), "start": 1, "duration": 3, "sourceStart": 10,
+             "scale": 0.4, "x": 0.3, "y": 0.3}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    video = [t for t in built["tracks"] if t["type"] == "video"]
+    assert [t["name"] for t in video] == ["main", "overlay"]
+    assert [len(t["segments"]) for t in video] == [1, 1]
+
+    placed = video[1]["segments"][0]["clip"]
+    assert placed["scale"] == {"x": 0.4, "y": 0.4}
+    assert placed["transform"] == {"x": 0.3, "y": 0.3}
+    assert draft.duration_us == 6_000_000
+
+
+@capcut_cli
+def test_captions_come_from_an_srt_and_land_on_their_own_track(tmp_path, drafts_dir,
+                                                               monkeypatch):
+    """`captions` reads an SRT and writes one text segment per cue, flagged
+    `sub_type: 1` so CapCut treats them as captions rather than plain text."""
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=10",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    srt = tmp_path / "cues.srt"
+    srt.write_text("1\n00:00:00,500 --> 00:00:02,000\nFirst line\n\n"
+                   "2\n00:00:02,500 --> 00:00:04,000\nSecond line\n")
+    spec = {"name": "eyecut-caps", "tracks": [{"type": "video", "items": [
+        {"path": str(source), "start": 0, "duration": 6}]}],
+        "operations": [{"op": "captions", "path": str(srt)}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    captions = next(t for t in built["tracks"] if t["type"] == "text")
+    assert captions["name"] == "captions"
+    assert [s["target_timerange"] for s in captions["segments"]] == [
+        {"start": 500_000, "duration": 1_500_000},
+        {"start": 2_500_000, "duration": 1_500_000}]
+    texts = built["materials"]["texts"]
+    assert [m["sub_type"] for m in texts] == [1, 1], "captions, not plain text"
+    assert [json.loads(m["content"])["text"] for m in texts] == ["First line", "Second line"]

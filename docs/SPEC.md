@@ -86,8 +86,12 @@ free — the cost is that compile's vocabulary is the vocabulary, warts and all.
 `volume`, `fontSize`, `color`, `sourceStart` · `transition` · `filter` · `effect`
 · `keyframe` on 11 properties · `audio-fade` · masks (nine shapes).
 
-**Available, never run** **[untested]**: `text-ranges`, `template`, `captions`,
-and the per-item `opacity` / `rotation` / `scale` / `x` / `y` fields.
+**Verified in the files, not yet in the app** **[untested]**: overlay / picture-in-
+picture via a second *named* video track with `scale`/`x`/`y`, and `captions` from
+an SRT (one text segment per cue, `sub_type: 1`).
+
+**Available, never run** **[untested]**: `text-ranges`, `template`, and the
+per-item `opacity` / `rotation` fields.
 
 **Not reachable**: `text-style` (crashes capcut-cli 0.21.1) · fonts (CapCut's
 names are not published) · store-downloaded assets (`harvest-enums` is a path,
@@ -125,6 +129,12 @@ one cost a real debugging session.
 - **`intensity` is 0–1.** Written verbatim otherwise: `5.0` lands in the draft as
   five times what the CapCut UI can express **[proven]**.
 - **`audio-fade` targets an audio item.**
+- **Two tracks of one type need distinct `name`s.** compile keys a built track on
+  (type, name), so unnamed tracks of the same type merge into one. A spec that
+  reads as a base track plus an overlay becomes a single track with segments on
+  top of each other — the main-track corruption `eyecut.timeline` exists to
+  prevent — and `capcut lint` reports it clean **[proven failure]**. Named tracks
+  are how an overlay is built, so overlapping across them is allowed.
 - **`text-style` is refused outright** — see below.
 
 ### What `write_draft` repairs after the compile

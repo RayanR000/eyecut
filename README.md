@@ -127,6 +127,7 @@ mis-builds. Each rule below is a mistake that cost a real debugging session:
 | `text-style` is refused outright | It crashes capcut-cli 0.21.1: `Cannot read properties of undefined (reading 'alpha')`. Set `fontSize` and `color` on the text item instead |
 | `filter`/`effect` need `start`, `duration` and `slug`, and take no `target` | A missing duration writes `target_timerange.duration: null`, which nulls the whole draft's duration and breaks reading it back |
 | `intensity` is 0–1 | Written verbatim: `5.0` lands in the draft as five times what the CapCut UI can express |
+| Two tracks of one type need distinct `name`s | compile keys a built track on (type, name), so unnamed tracks merge — a base clip and an overlay land on the same track on top of each other, and lint calls it clean |
 | Items on one track may not overlap | The detectable half of the `start`/`sourceStart` mistake above |
 
 ```python

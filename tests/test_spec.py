@@ -221,3 +221,34 @@ def test_invert_is_the_one_boolean():
     validate_spec(spec({"type": "video", "items": [
         {"path": "/f/a.mp4", "start": 0, "duration": 4,
          "mask": {"slug": "heart", "invert": True}}]}))
+
+
+def test_two_unnamed_video_tracks_would_merge_and_collide():
+    """The corruption case. compile keys a built track on (type, name), so two
+    video tracks without distinct names become one -- a base clip and an overlay
+    land on the same track, on top of each other. `capcut lint` reports it clean
+    [proven]."""
+    base = {"type": "video", "items": [{"path": "/f/a.mp4", "start": 0, "duration": 6}]}
+    overlay = {"type": "video", "items": [{"path": "/f/b.mp4", "start": 1, "duration": 3}]}
+    with pytest.raises(SpecError, match="name"):
+        validate_spec(spec(base, overlay))
+
+
+def test_named_video_tracks_may_overlap_because_that_is_an_overlay():
+    base = {"type": "video", "name": "main",
+            "items": [{"path": "/f/a.mp4", "start": 0, "duration": 6}]}
+    overlay = {"type": "video", "name": "overlay",
+               "items": [{"path": "/f/b.mp4", "start": 1, "duration": 3,
+                          "scale": 0.4, "x": 0.3, "y": 0.3}]}
+    validate_spec(spec(base, overlay))
+
+
+def test_two_unnamed_video_tracks_that_do_not_collide_are_fine():
+    """Merging is only a problem when the segments actually land on each other."""
+    first = {"type": "video", "items": [{"path": "/f/a.mp4", "start": 0, "duration": 2}]}
+    second = {"type": "video", "items": [{"path": "/f/b.mp4", "start": 2, "duration": 2}]}
+    validate_spec(spec(first, second))
+
+
+def test_captions_take_an_srt_path():
+    validate_spec(spec(operations=[{"op": "captions", "path": "/subs/cues.srt"}]))
