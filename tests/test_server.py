@@ -33,8 +33,8 @@ def test_the_server_exposes_the_tools_claude_calls():
     assert {"register_media", "write_draft"} <= names
 
 
-def test_register_media_probes_each_path_and_writes_the_entries(tmp_path, clip):
-    meta_path = tmp_path / "proj" / "draft_meta_info.json"
+def test_register_media_probes_each_path_and_writes_the_entries(tmp_path, drafts_dir, clip):
+    meta_path = drafts_dir / "proj" / "draft_meta_info.json"
     meta_path.parent.mkdir()
     meta_path.write_text(json.dumps({"draft_name": "proj"}))
 
@@ -47,8 +47,8 @@ def test_register_media_probes_each_path_and_writes_the_entries(tmp_path, clip):
     assert result["added"] == [str(clip)]
 
 
-def test_register_media_reports_a_bad_path_without_writing(tmp_path):
-    meta_path = tmp_path / "proj" / "draft_meta_info.json"
+def test_register_media_reports_a_bad_path_without_writing(tmp_path, drafts_dir):
+    meta_path = drafts_dir / "proj" / "draft_meta_info.json"
     meta_path.parent.mkdir()
     meta_path.write_text(json.dumps({"draft_name": "proj"}))
 
@@ -57,18 +57,20 @@ def test_register_media_reports_a_bad_path_without_writing(tmp_path):
     assert "draft_materials" not in json.loads(meta_path.read_text())
 
 
-def test_write_draft_compiles_registers_and_reports_the_duration(tmp_path, clip):
+def test_write_draft_compiles_registers_and_reports_the_duration(tmp_path, drafts_dir, clip):
     spec = {"name": "srv", "tracks": [
         {"type": "video", "items": [{"path": str(clip), "start": 0, "duration": 5}]}]}
 
-    result = srv.write_draft(spec, str(tmp_path / "proj"))
+    result = srv.write_draft(spec, str(drafts_dir / "proj"))
 
     meta = json.loads((Path(result["project"]) / "draft_meta_info.json").read_text())
-    assert [e["file_Path"] for g in meta["draft_materials"] for e in g["value"]] == [str(clip)]
+    # the copy compile made inside the draft, not the original the spec named
+    assert [e["file_Path"] for g in meta["draft_materials"]
+            for e in g["value"]] == ["./assets/video/clip.mp4"]
     assert result["duration_us"] == meta["tm_duration"] == 5_000_000
 
 
-def test_write_draft_finds_its_sources_in_the_spec(tmp_path, clip):
+def test_write_draft_finds_its_sources_in_the_spec(tmp_path, drafts_dir, clip):
     """Claude writes one spec; it should not also have to list the same files again."""
     spec = {"name": "srv", "tracks": [
         {"type": "video", "items": [{"path": str(clip), "start": 0, "duration": 5}]}]}

@@ -1,5 +1,13 @@
 # Source media — large, and not ours to redistribute. See footage/CREDITS.md.
 footage/
 scratch/
+
+# Python
 __pycache__/
 *.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# macOS
+.DS_Store

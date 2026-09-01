@@ -59,6 +59,16 @@ def register_media(project: str, paths: list[str]) -> dict[str, Any]:
             "backup": str(result.backup) if result.backup else None}
 
 
+# CapCut imports these but cannot decode them, so the draft opens correct and plays
+# nothing. Worth saying up front rather than after the user wonders why the preview
+# is black [proven -- Sintel.2010.1080p.mkv, Matroska + AC-3].
+UNPLAYABLE_SUFFIXES = {".mkv", ".webm", ".avi", ".flv", ".wmv"}
+
+
+def unplayable(p) -> bool:
+    return Path(str(p.path)).suffix.lower() in UNPLAYABLE_SUFFIXES
+
+
 @server.tool()
 def write_draft(spec: dict, project_dir: str) -> dict[str, Any]:
     """Build a CapCut draft from a declarative spec and make it openable: compile
@@ -67,13 +77,18 @@ def write_draft(spec: dict, project_dir: str) -> dict[str, Any]:
 
     spec:        capcut-cli compile spec — {"name", "tracks":[{"type","items":[...]}]},
                  item times in seconds.
-    project_dir: where to create the draft folder.
+    project_dir: where to create the draft folder. Its parent must hold at least one
+                 project CapCut itself made — compile needs one as a template, or the
+                 draft will not open.
     """
     probes = [probe_media(p) for p in sources_in(spec)]
     result = draft_mod.write_draft(spec, project_dir, probes)
     return {"project": str(result.path),
             "duration_us": result.duration_us,
-            "registered": result.registration.added}
+            "registered": result.registration.added,
+            "template": str(result.template) if result.template else None,
+            "warnings": result.warnings,
+            "unplayable": [str(p.path) for p in probes if unplayable(p)]}
 
 
 def main() -> None:

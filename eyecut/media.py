@@ -30,7 +30,9 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".bmp", ".
 
 @dataclass
 class MediaProbe:
-    path: Path
+    # A draft-relative path stays a str: Path("./assets/x") normalizes to
+    # "assets/x", and CapCut's own drafts write the "./" [see is_draft_relative].
+    path: Path | str
     metetype: str          # "video" | "music" | "photo"
     width: int
     height: int
@@ -61,6 +63,18 @@ def capcut_is_running() -> bool:
         if out.returncode == 0 and out.stdout.strip():
             return True
     return False
+
+
+def is_draft_relative(path: Path | str) -> bool:
+    """CapCut registers media it holds as `./assets/...`, relative to the draft.
+
+    This is how CapCut's own drafts do it, and matching it is what stops the
+    relink dialog: registering the same file by its original absolute path
+    leaves the media panel reporting "Media lost" even though the file is there,
+    because the timeline refers to the copy inside the draft, not the original
+    [proven, probes D vs E].
+    """
+    return str(path).startswith("./")
 
 
 def probe(path: Path) -> MediaProbe:
@@ -109,7 +123,7 @@ def entry_for(p: MediaProbe) -> dict:
         "create_time": now,
         "duration": int(p.duration_us),
         "enter_from": 0,
-        "extra_info": p.path.name,
+        "extra_info": Path(str(p.path)).name,
         "file_Path": str(p.path),
         "height": int(p.height),
         "id": str(uuid.uuid4()),
@@ -126,7 +140,7 @@ def entry_for(p: MediaProbe) -> dict:
     }
 
 
-def _groups(meta: dict) -> list[dict]:
+def groups_of(meta: dict) -> list[dict]:
     """Return draft_materials with every CapCut group present, order preserved."""
     existing = meta.get("draft_materials") or []
     by_type = {g["type"]: g for g in existing if isinstance(g, dict) and "type" in g}
@@ -139,7 +153,7 @@ def _groups(meta: dict) -> list[dict]:
     return ordered
 
 
-def _write_meta(meta_path: Path, meta: dict) -> Path:
+def write_meta(meta_path: Path, meta: dict) -> Path:
     """Back up, then replace `meta_path` atomically. Returns the backup path.
 
     Copy, never move — nothing is ever deleted. `os.replace` is atomic only
@@ -176,7 +190,7 @@ def set_timeline_duration(meta_path: Path | str, duration_us: int) -> Path:
                            "Quit CapCut and re-run.")
     meta = json.loads(meta_path.read_text())
     meta["tm_duration"] = duration_us
-    return _write_meta(meta_path, meta)
+    return write_meta(meta_path, meta)
 
 
 def register_media(meta_path: Path | str, probes: list[MediaProbe]) -> Registration:
@@ -187,14 +201,15 @@ def register_media(meta_path: Path | str, probes: list[MediaProbe]) -> Registrat
     """
     meta_path = Path(meta_path)
     for p in probes:
-        if not Path(p.path).is_absolute():
-            raise ValueError(f"media path must be absolute, CapCut resolves it verbatim: {p.path}")
+        if not is_draft_relative(p.path) and not Path(p.path).is_absolute():
+            raise ValueError(
+                f"media path must be draft-relative ('./assets/...') or absolute: {p.path}")
     if capcut_is_running():
         raise RuntimeError("CapCut is running — it overwrites draft_meta_info.json on quit. "
                            "Quit CapCut and re-run.")
 
     meta = json.loads(meta_path.read_text())
-    zero = next(g for g in _groups(meta) if g["type"] == 0)
+    zero = next(g for g in groups_of(meta) if g["type"] == 0)
     zero.setdefault("value", [])
     known = {e.get("file_Path") for e in zero["value"]}
 
@@ -208,7 +223,7 @@ def register_media(meta_path: Path | str, probes: list[MediaProbe]) -> Registrat
         known.add(path_str)
         result.added.append(path_str)
 
-    result.backup = _write_meta(meta_path, meta)
+    result.backup = write_meta(meta_path, meta)
     return result
 
 

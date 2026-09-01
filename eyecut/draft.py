@@ -12,17 +12,30 @@ faked in tests; `_capcut_runner` is the real one.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from eyecut import media
-from eyecut.media import (MediaProbe, Registration, register_media,
-                          set_timeline_duration, timeline_duration_us)
+from eyecut.media import (MediaProbe, Registration, groups_of, probe,
+                          register_media, set_timeline_duration,
+                          timeline_duration_us, write_meta)
+from eyecut.template import find_template
 
 
 class CompileError(RuntimeError):
     """`capcut-cli compile` exited non-zero. Carries its stderr verbatim."""
+
+
+# `capcut compile` rewrites media paths to this form: the file is copied into the
+# draft's own assets/ and referenced through a placeholder that CapCut expands to
+# the draft folder. CapCut-authored drafts register the same file as "./assets/..."
+# -- registering the original absolute path instead is what leaves the media panel
+# saying "Media lost" and pops the relink dialog [proven, probes D vs E].
+PLACEHOLDER = re.compile(r"^##_draftpath_placeholder_[0-9A-Fa-f-]+_##/")
 
 
 @dataclass
@@ -30,6 +43,48 @@ class Draft:
     path: Path
     duration_us: int
     registration: Registration
+    template: Path | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def timeline_media(draft_info_path: Path) -> list[tuple[Path, str]]:
+    """Every distinct file the compiled timeline references, as
+    (where it now lives, how the draft must refer to it).
+
+    Compile copies each source into the draft's own assets/ and writes the copy's
+    path two different ways depending on the template it was given: the
+    `##_draftpath_placeholder_...##` form CapCut uses internally, or a plain
+    absolute path into the draft folder. Both mean the same file; both are
+    normalised here to the "./assets/..." form CapCut registers.
+    """
+    draft_info_path = Path(draft_info_path)
+    data = json.loads(draft_info_path.read_text())
+    draft_dir = draft_info_path.parent
+    found: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    for bucket in data.get("materials", {}).values():
+        if not isinstance(bucket, list):
+            continue
+        for material in bucket:
+            path = material.get("path") if isinstance(material, dict) else None
+            if not path:
+                continue
+            relative = _inside_draft(path, draft_dir)
+            if relative is None or relative in seen:
+                continue
+            seen.add(relative)
+            found.append((draft_dir / relative, f"./{relative}"))
+    return found
+
+
+def _inside_draft(path: str, draft_dir: Path) -> str | None:
+    """`path` as a draft-relative posix path, or None if it is not in the draft."""
+    if PLACEHOLDER.match(path):
+        return PLACEHOLDER.sub("", path)
+    try:
+        return Path(path).resolve().relative_to(draft_dir.resolve()).as_posix()
+    except ValueError:
+        return None
 
 
 def _capcut_runner(argv: list[str], cwd: Path) -> tuple[int, str]:
@@ -38,12 +93,16 @@ def _capcut_runner(argv: list[str], cwd: Path) -> tuple[int, str]:
 
 
 def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
-                *, runner=_capcut_runner) -> Draft:
+                *, runner=_capcut_runner, template: Path | str | None = None) -> Draft:
     """Compile `spec` into a draft at `project_dir` and make it openable.
 
-    `probes` are the sources the spec references; every one is registered in
-    draft_materials. The CapCut-is-running guard runs *before* the compile so a
-    refused write leaves no half-built project behind.
+    `probes` are the sources the spec names; they are validated up front so a
+    missing file fails before anything is written, but they are not what gets
+    registered. Compile copies each source into the draft and renames it, so the
+    registration below reads the copies back out of the compiled timeline.
+
+    The CapCut-is-running guard runs *before* the compile so a refused write
+    leaves no half-built project behind.
     """
     project_dir = Path(project_dir)
     if media.capcut_is_running():   # via the module, so the guard stays patchable
@@ -51,24 +110,100 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
                            "Quit CapCut and re-run.")
 
     store = project_dir.parent
-    spec_path = store / f".{project_dir.name}.spec.json"
     store.mkdir(parents=True, exist_ok=True)
+    # Without this the draft compiles, lists, and then will not open at all.
+    template = Path(template) if template else find_template(store)
+
+    spec_path = store / f".{project_dir.name}.spec.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False))
-    code, stderr = runner(["capcut", "compile", str(spec_path), "--out", str(project_dir)], store)
+    warnings: list[str] = []
+    code, stderr = runner(["capcut", "compile", str(spec_path), "--out", str(project_dir),
+                           "--template", str(template)], store)
     if code != 0:
         raise CompileError(f"capcut compile failed ({code}): {stderr.strip()}")
+    # The CLI prints its success line on stderr too; only the warnings matter, and
+    # they matter a lot -- the 6.5.0 template problem was announced on every compile
+    # and went unread for want of these three lines.
+    warnings += [line.strip() for line in stderr.splitlines() if "WARNING" in line]
 
     # `capcut register` writes the store entry that makes the draft appear in
     # CapCut's project list, and rewrites the sidecar to do it -- so it runs
-    # *before* register_media. It preserves draft_materials, but only because it
-    # never sees them here [verified against 0.21.1].
+    # *before* the media registration. It preserves draft_materials, but only
+    # because it never sees them here [verified against 0.21.1].
     code, stderr = runner(["capcut", "register", str(project_dir),
                            "--apply", "--drafts", str(store)], store)
     if code != 0:
         raise CompileError(f"capcut register failed ({code}): {stderr.strip()}")
 
+    mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
-    registration = register_media(meta_path, probes)
+    clear_inherited_media(meta_path)
+    copied = timeline_media(project_dir / "draft_info.json")
+    registration = register_media(
+        meta_path, [replace(probe(actual), path=relative) for actual, relative in copied])
     duration_us = timeline_duration_us(project_dir / "draft_info.json")
     set_timeline_duration(meta_path, duration_us)
-    return Draft(path=project_dir, duration_us=duration_us, registration=registration)
+    return Draft(path=project_dir, duration_us=duration_us, registration=registration,
+                 template=template, warnings=warnings)
+
+
+def mirror_timeline(project_dir: Path) -> list[Path]:
+    """Give the draft its own timeline identity and put the compiled timeline
+    everywhere CapCut 9.x looks for it.
+
+    A CapCut 9.1 draft stores its timeline four times over, byte for byte: the
+    draft's own draft_info.json and template-2.tmp, and the same pair again under
+    Timelines/<main_timeline_id>/. `capcut compile` writes only the first.
+
+    It also ties the two together by id: in every CapCut-authored draft,
+    draft_info.json's `id` *is* the main timeline's id and the name of the folder
+    holding it. Compile gives the draft a fresh id but leaves the template's
+    Timelines/ folder untouched, so the two disagree -- and a draft whose timeline
+    id resolves to nothing does not open at all: clicking it in the project list
+    does nothing, with no error [proven].
+
+    Both problems come from the template, so neither was visible until eyecut
+    started using one. The template's timeline folder is reused rather than
+    rebuilt: it carries attachment files of its own.
+    """
+    project = Path(project_dir)
+    compiled = project / "draft_info.json"
+    timeline_id = str(uuid.uuid4()).upper()          # CapCut writes these uppercase
+
+    timeline = json.loads(compiled.read_text())
+    timeline["id"] = timeline_id
+    compiled.write_text(json.dumps(timeline, ensure_ascii=False))
+
+    written = [project / "template-2.tmp"]
+    index = project / "Timelines" / "project.json"
+    if index.is_file():
+        data = json.loads(index.read_text())
+        inherited = project / "Timelines" / str(data.get("main_timeline_id"))
+        folder = project / "Timelines" / timeline_id
+        if inherited.is_dir() and inherited != folder:
+            inherited.rename(folder)                  # keep its attachment files
+        folder.mkdir(parents=True, exist_ok=True)
+        data["id"] = timeline_id
+        data["main_timeline_id"] = timeline_id
+        for entry in data.get("timelines") or []:
+            entry["id"] = timeline_id
+        index.write_text(json.dumps(data, ensure_ascii=False))
+        written += [folder / "draft_info.json", folder / "template-2.tmp"]
+    for path in written:
+        shutil.copyfile(compiled, path)   # byte-identical, as CapCut keeps them
+    return written
+
+
+def clear_inherited_media(meta_path: Path) -> None:
+    """Drop the template's own `draft_materials`.
+
+    Compile copies the template folder wholesale, so the new draft starts out
+    claiming to have imported whatever the template had. Those files are not in
+    this timeline and are usually long gone from disk, so CapCut opens the draft
+    with a media panel full of "Media lost" and a relink dialog for files the
+    edit never used [proven -- five stale mp3s from an empty template].
+    """
+    meta = json.loads(meta_path.read_text())
+    for group in groups_of(meta):
+        group["value"] = []
+    write_meta(meta_path, meta)

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from eyecut.media import (MediaProbe, entry_for, register_media,
-                         set_timeline_duration, timeline_duration_us)
+                          set_timeline_duration, timeline_duration_us)
 
 @pytest.fixture(autouse=True)
 def capcut_not_running(monkeypatch):
@@ -172,3 +172,4 @@ def test_tm_duration_refuses_to_write_while_capcut_is_running(tmp_path, monkeypa
     with pytest.raises(RuntimeError, match="CapCut is running"):
         set_timeline_duration(meta_path, 9_500_000)
     assert meta_path.read_text() == before
+

@@ -3,10 +3,14 @@ name = "eyecut"
 version = "0.1.0"
 description = "CapCut support for Claude: Claude does the editing, eyecut writes the files."
 requires-python = ">=3.11"
-dependencies = ["mcp>=2.0"]
+dependencies = ["mcp>=2.0", "numpy>=1.26", "pillow>=10"]
 
 [project.scripts]
 eyecut = "eyecut.server:main"
+eyecut-shots = "eyecut.shots:main"
+eyecut-serve = "eyecut.static_server:main"
+eyecut-proxy = "eyecut.proxy:main"
+eyecut-speech = "eyecut.speech:main"
 
 [build-system]
 requires = ["setuptools>=68"]

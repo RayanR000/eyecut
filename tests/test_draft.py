@@ -35,40 +35,56 @@ def fake_capcut(duration_us=9_500_000, returncode=0, stderr=""):
         if returncode:
             return returncode, stderr
         out = Path(argv[argv.index("--out") + 1])
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "draft_info.json").write_text(json.dumps({"duration": duration_us}))
-        (out / "draft_meta_info.json").write_text(
-            json.dumps({"draft_name": out.name, "tm_duration": 0, "draft_materials": []}))
+        (out / "assets" / "video").mkdir(parents=True, exist_ok=True)
+        # compile copies each source into the draft and points the timeline at the
+        # copy through this placeholder -- the real CLI's format, verbatim.
+        copied = out / "assets" / "video" / "a.mp4"
+        copied.write_bytes(b"")
+        (out / "draft_info.json").write_text(json.dumps(
+            {"duration": duration_us,
+             "materials": {"videos": [{"path": "##_draftpath_placeholder_0E685133-18CE-"
+                                               "45ED-8CB8-2904A212EC80_##/assets/video/a.mp4"}]}}))
+        (out / "draft_meta_info.json").write_text(json.dumps(
+            {"draft_name": out.name, "tm_duration": 0, "draft_materials": []}))
         return 0, ""
     return run
 
 
-def test_compiled_draft_carries_the_timeline_duration_in_its_meta_file(tmp_path):
-    draft = write_draft(SPEC, tmp_path / "proj", PROBES, runner=fake_capcut())
+@pytest.fixture(autouse=True)
+def fake_probe(monkeypatch):
+    """The fake compile writes empty files; only the registered path is under test."""
+    monkeypatch.setattr("eyecut.draft.probe", lambda p: MediaProbe(
+        path=Path(p), metetype="video", width=1920, height=1080, duration_us=9_500_000))
+
+
+def test_compiled_draft_carries_the_timeline_duration_in_its_meta_file(tmp_path, drafts_dir):
+    draft = write_draft(SPEC, drafts_dir / "proj", PROBES, runner=fake_capcut())
 
     meta = json.loads((draft.path / "draft_meta_info.json").read_text())
     assert meta["tm_duration"] == 9_500_000  # 0 is what lists the draft as 00:00
 
 
-def test_every_source_in_the_spec_is_registered(tmp_path):
-    draft = write_draft(SPEC, tmp_path / "proj", PROBES, runner=fake_capcut())
+def test_every_source_in_the_spec_is_registered(tmp_path, drafts_dir):
+    draft = write_draft(SPEC, drafts_dir / "proj", PROBES, runner=fake_capcut())
 
     meta = json.loads((draft.path / "draft_meta_info.json").read_text())
     registered = [e["file_Path"] for g in meta["draft_materials"] for e in g["value"]]
-    assert registered == ["/footage/a.mp4"]
+    # The copy inside the draft, not the original: registering the original is what
+    # leaves CapCut showing "Media lost" and a relink dialog [proven, probes D/E].
+    assert registered == ["./assets/video/a.mp4"]
 
 
-def test_a_failed_compile_raises_with_the_cli_output(tmp_path):
+def test_a_failed_compile_raises_with_the_cli_output(tmp_path, drafts_dir):
     with pytest.raises(CompileError, match="bad segment"):
-        write_draft(SPEC, tmp_path / "proj", PROBES,
+        write_draft(SPEC, drafts_dir / "proj", PROBES,
                     runner=fake_capcut(returncode=1, stderr="bad segment"))
 
 
-def test_refuses_to_compile_while_capcut_is_running(tmp_path, monkeypatch):
+def test_refuses_to_compile_while_capcut_is_running(tmp_path, drafts_dir, monkeypatch):
     monkeypatch.setattr("eyecut.media.capcut_is_running", lambda: True)
     with pytest.raises(RuntimeError, match="CapCut is running"):
-        write_draft(SPEC, tmp_path / "proj", PROBES, runner=fake_capcut())
-    assert not (tmp_path / "proj").exists()  # nothing half-written
+        write_draft(SPEC, drafts_dir / "proj", PROBES, runner=fake_capcut())
+    assert not (drafts_dir / "proj").exists()  # nothing half-written
 
 
 # --- against the real capcut-cli ------------------------------------------
@@ -80,10 +96,12 @@ capcut_cli = pytest.mark.skipif(shutil.which("capcut") is None,
 
 
 @capcut_cli
-def test_a_real_compile_produces_a_draft_capcut_can_list_and_relink(tmp_path):
-    """The two things `capcut compile` alone leaves wrong: no draft_materials (the
-    relink prompt) and tm_duration 0 (lists as 00:00). Plus the store entry, which
-    is `capcut register`'s job and is delegated to it."""
+def test_a_real_compile_produces_a_draft_capcut_can_open(tmp_path, drafts_dir, monkeypatch):
+    """Everything `capcut compile` alone leaves wrong, against the real CLI:
+    the 6.5.0 template CapCut refuses outright, no draft_materials (the relink
+    prompt), and tm_duration 0 (lists as 00:00). The store entry is `capcut
+    register`'s job and is delegated to it."""
+    monkeypatch.undo()   # the real CLI writes real files; probe them for real
     source = tmp_path / "a.mp4"
     subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
                     "testsrc=size=320x240:rate=30:duration=6",
@@ -94,10 +112,63 @@ def test_a_real_compile_produces_a_draft_capcut_can_list_and_relink(tmp_path):
     probes = [MediaProbe(path=source, metetype="video",
                          width=320, height=240, duration_us=6_000_000)]
 
-    draft = write_draft(spec, tmp_path / "proj", probes)
+    draft = write_draft(spec, drafts_dir / "proj", probes)
 
     meta = json.loads((draft.path / "draft_meta_info.json").read_text())
-    assert [e["file_Path"] for g in meta["draft_materials"] for e in g["value"]] == [str(source)]
+    registered = [e["file_Path"] for g in meta["draft_materials"] for e in g["value"]]
+    assert registered == ["./assets/video/a.mp4"], "must register the copy, not the original"
+    assert (draft.path / "assets" / "video" / "a.mp4").is_file()
     assert meta["tm_duration"] == draft.duration_us == 5_000_000
-    store = json.loads((tmp_path / "root_meta_info.json").read_text())
+    store = json.loads((drafts_dir / "root_meta_info.json").read_text())
     assert store["all_draft_store"], "draft is not listed in the store"
+
+    # the whole reason for the template: a 6.5.0 draft will not open at all
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    assert built["platform"]["app_version"] != "6.5.0"
+
+
+@capcut_cli
+def test_the_compiled_timeline_reaches_the_folder_capcut_reads(tmp_path, drafts_dir, monkeypatch):
+    """A CapCut 9.x draft keeps its timeline under Timelines/<main_timeline_id>/ as
+    well as at the root, and reads the former. Compile writes only the root, so a
+    draft compiled against a real template opened with an empty timeline [proven]."""
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=6",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-tl", "tracks": [
+        {"type": "video", "items": [{"path": str(source), "start": 0, "duration": 5}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [], )
+
+    index = json.loads((draft.path / "Timelines" / "project.json").read_text())
+    active = draft.path / "Timelines" / index["main_timeline_id"] / "draft_info.json"
+    assert json.loads(active.read_text())["duration"] == 5_000_000
+    assert (draft.path / "template-2.tmp").read_text() == \
+        (draft.path / "draft_info.json").read_text()
+
+
+@capcut_cli
+def test_the_draft_gets_a_timeline_identity_of_its_own(tmp_path, drafts_dir, monkeypatch):
+    """draft_info.json's id must be the main timeline's id and its folder name.
+    Compile leaves the template's, which resolves to nothing: the draft lists,
+    and clicking it does nothing at all [proven]."""
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=6",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-id", "tracks": [
+        {"type": "video", "items": [{"path": str(source), "start": 0, "duration": 5}]}]}
+    template_id = json.loads(
+        (drafts_dir / "empty_project" / "Timelines" / "project.json").read_text())["main_timeline_id"]
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    index = json.loads((draft.path / "Timelines" / "project.json").read_text())
+    assert built["id"] == index["main_timeline_id"] == index["id"]
+    assert [t["id"] for t in index["timelines"]] == [built["id"]]
+    assert (draft.path / "Timelines" / built["id"] / "draft_info.json").is_file()
+    assert built["id"] != template_id, "must not reuse the template's timeline id"
