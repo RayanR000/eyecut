@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from eyecut import media
+from eyecut.draft import mirror_timeline_files
 
 DRAFT_STORE = Path.home() / "Movies/CapCut/User Data/Projects/com.lveditor.draft"
 
@@ -339,6 +340,10 @@ class Timeline:
                 shutil.copy2(self.path, bak)
 
         self.path.write_text(json.dumps(self.d, ensure_ascii=False))
+        # A CapCut 9.x draft keeps its timeline in four files, and reads the copy
+        # under Timelines/<main_timeline_id>/ -- writing only this one loses the
+        # whole edit without an error [proven].
+        mirror_timeline_files(self.dir)
         return [p for p in problems if not p.fatal]
 
     def restore(self, backup_tag: str) -> None:
@@ -351,6 +356,7 @@ class Timeline:
         if not bak.exists():
             raise TimelineError(f"no backup {bak.name} next to {self.dir.name}")
         shutil.copy2(bak, self.path)
+        mirror_timeline_files(self.dir)   # a restore CapCut ignores is not a restore
         self.d = json.loads(self.path.read_text())
 
     def __deepcopy__(self, memo):

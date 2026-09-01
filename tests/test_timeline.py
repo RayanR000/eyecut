@@ -313,3 +313,36 @@ def test_source_name_resolves_the_file(tmp_path):
 def test_fps_defaults_when_absent(tmp_path):
     tl = build(tmp_path, [seg(0, snap_us(0.5, 30.0), "MAT-A")], fps=None)
     assert tl.fps == 30.0
+
+
+def test_saving_reaches_the_timeline_folder_capcut_actually_reads(tmp_path):
+    """A CapCut 9.x draft keeps its timeline four times over and reads the copy
+    under Timelines/<main_timeline_id>/. Writing only the root draft_info.json
+    loses the edit with no error at all: a draft whose root said 4 clips / 10s and
+    whose timeline folder said 32 clips / 36s opened as 32 clips / 36s [proven]."""
+    tl = build(tmp_path, [seg(0, 1_000_000, "MAT-A")])
+    timeline_id = "6CB805AA-C19E-4DF7-8292-CF3D93C3C9B1"
+    folder = tl.dir / "Timelines" / timeline_id
+    folder.mkdir(parents=True)
+    (tl.dir / "Timelines" / "project.json").write_text(
+        json.dumps({"id": timeline_id, "main_timeline_id": timeline_id,
+                    "timelines": [{"id": timeline_id, "name": "Timeline 01"}]}))
+    (folder / "draft_info.json").write_text('{"stale": true}')
+
+    tl.d["tracks"][0]["segments"] = [seg(0, 2_000_000, "MAT-A")]
+    tl.save()
+
+    root = (tl.dir / "draft_info.json").read_text()
+    assert (folder / "draft_info.json").read_text() == root
+    assert (folder / "template-2.tmp").read_text() == root
+    assert (tl.dir / "template-2.tmp").read_text() == root
+
+
+def test_a_draft_without_a_timelines_folder_still_saves(tmp_path):
+    """Older drafts have no Timelines/ at all; mirroring must not require one."""
+    tl = build(tmp_path, [seg(0, 1_000_000, "MAT-A")])
+
+    tl.save()
+
+    assert (tl.dir / "template-2.tmp").read_text() == (tl.dir / "draft_info.json").read_text()
+    assert not (tl.dir / "Timelines").exists()

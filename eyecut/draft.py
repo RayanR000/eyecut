@@ -194,6 +194,32 @@ def mirror_timeline(project_dir: Path) -> list[Path]:
     return written
 
 
+def mirror_timeline_files(project_dir: Path | str) -> list[Path]:
+    """Copy an already-correct draft_info.json to the other three places CapCut
+    keeps it, leaving every id alone.
+
+    This is the half of `mirror_timeline` that an in-place edit needs: the draft
+    already has its identity, it just changed. Writing only the root file loses
+    the edit outright -- CapCut reads Timelines/<main_timeline_id>/draft_info.json
+    and overwrites the root from it, even when the root is the newer file
+    [proven: a draft whose root said 4 clips / 10s and whose timeline folder said
+    32 clips / 36s opened as 32 clips / 36s].
+    """
+    project = Path(project_dir)
+    compiled = project / "draft_info.json"
+    written = [project / "template-2.tmp"]
+    index = project / "Timelines" / "project.json"
+    if index.is_file():
+        main_id = json.loads(index.read_text()).get("main_timeline_id")
+        if main_id:
+            folder = project / "Timelines" / str(main_id)
+            if folder.is_dir():
+                written += [folder / "draft_info.json", folder / "template-2.tmp"]
+    for path in written:
+        shutil.copyfile(compiled, path)
+    return written
+
+
 def clear_inherited_media(meta_path: Path) -> None:
     """Drop the template's own `draft_materials`.
 
