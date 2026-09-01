@@ -2,9 +2,10 @@
 
 *CapCut support for Claude. Claude does the editing; eyecut writes the files.*
 
-Rewritten 2026-08-31, narrowing an earlier spec that described a five-stage
-autonomous pipeline. **[proven]** marks a claim tested on real footage;
-**[untested]** means the pieces exist but the whole was never run.
+Rewritten 2026-09-01, narrowing a spec that still described five MCP tools and a
+`music_grid` that was never built. **[proven]** marks a claim tested on real
+footage or confirmed in the CapCut app; **[untested]** means the pieces exist but
+nobody has run them.
 
 ---
 
@@ -12,8 +13,8 @@ autonomous pipeline. **[proven]** marks a claim tested on real footage;
 
 Claude can already look at footage and have an opinion about it. What it cannot do
 is put that opinion into CapCut. eyecut is the layer that closes that gap: an MCP
-server that registers media, writes a draft, and hands back a project that opens
-ready to adjust.
+server that registers media and writes a draft, and hands back a project that
+opens ready to adjust.
 
 The editing decisions — which shot, where, how long — happen in the conversation,
 with the user's taste in the loop. That is not a limitation to engineer away.
@@ -25,7 +26,6 @@ times; the user's judgment was the necessary signal **[proven]**.
 - **Not an editing pipeline.** No `scan`, no `arrange`, no shot-description
   database. Claude has vision; batching frames through a separate model to produce
   descriptions Claude then reads is a reimplementation of Claude as a cron job.
-  See *Out of scope* below.
 - Not a renderer. CapCut renders; eyecut writes the project.
 - Not a CapCut draft library. `capcut-cli` does that well and eyecut depends on it.
 
@@ -33,7 +33,15 @@ times; the user's judgment was the necessary signal **[proven]**.
 
 ## The MCP surface
 
-Five tools. Everything else is Claude.
+**Two tools.** The test a tool has to pass is not "is it useful" but **"can Claude
+do it another way?"** Claude runs in a shell. Frame extraction, shot browsing and
+proxy rendering are a few lines of ffmpeg away, so they are CLIs
+(`eyecut-frames`, `eyecut-shots`, `eyecut-proxy`, `eyecut-serve`,
+`eyecut-speech`), not tools. Writing CapCut's format correctly is the thing no
+shell gets you.
+
+`tests/test_server.py` asserts the surface is *exactly* these two, so adding a
+third fails a test and forces the argument.
 
 ### `register_media(project, paths)`
 
@@ -43,68 +51,114 @@ makes a generated draft worse than useless.
 
 No other generator does this, verified 2026-08-31 against both candidates:
 `capcut-cli` 0.21.1 puts the write **deliberately out of scope** for want of a
-captured entry shape (`dist/store.js`, `assessMediaRegistrationRaw`) and only
-observes the three empty states via `diagnose`/`lint`; VectCutAPI ships a template
-with every `draft_materials` group empty and no code that ever populates it.
+captured entry shape (`dist/store.js`, `assessMediaRegistrationRaw`); VectCutAPI
+ships a template with every `draft_materials` group empty.
 
 The entry shape is captured in `tests/fixtures/draft_materials_entries.json` from
 CapCut-authored projects — note `file_Path` (capital P), `metetype` (misspelled),
 microsecond durations, and that every real entry sat in the `type: 0` group
 regardless of `metetype` **[proven]**.
 
-Upstreaming is the better end state: `capcut fixture <project> --out <dir>` on a
-CapCut-authored draft produces exactly the evidence bundle `capcut-cli` says it is
-missing. Contributing it could move this tool out of eyecut entirely.
+Register the **copy inside the draft** (`./assets/video/x.mp4`), not the original
+absolute path: registering the original leaves the media panel saying "Media lost"
+**[proven, probes D vs E]**. Audio sources register the same way with no special
+handling **[proven]**.
 
-### `write_draft(spec)`
+### `write_draft(spec, project_dir)`
 
-Delegates to `capcut-cli compile` (JSON spec in, draft out), then calls
-`register_media` on every source the spec references, then registers the project
-in `root_meta_info.json` — `capcut-cli` covers that last part correctly (adds the
-entry, creates the file if absent, never rewrites the whole index), so delegate it
-**[proven]**.
+Validates the spec, delegates the timeline to `capcut compile`, then finishes the
+three things compile leaves undone. Confirmed end to end: a draft built from
+Sintel footage opened in CapCut with no relink prompt, correct durations, and the
+`Speed 2.0X` badge on the right clip **[proven]**.
 
 **Integer microseconds throughout.** Float seconds cause 1µs phantom overlaps that
 the draft layer rejects **[proven failure]**.
 
-### `extract_frames(path, times | every)`
+---
 
-ffmpeg wrapper that writes JPEGs Claude looks at directly. This is how eyecut
-"sees" footage — Claude reads the frames in the conversation. Optionally tiles
-them into contact sheets (~35 rows, 3 frames each), which is what makes reading a
-long source affordable **[proven]**.
+## The spec, and what it reaches
 
-Also reports what would make a source unusable before anyone spends time on it:
-fps ≠ 24 on anime means frame-interpolated (every "clips for editing" pack online
-is), codec AV1 means CapCut cannot read it, and watermarks cluster in the first and
-last seconds **[proven]** — all three were hit in one session.
+`write_draft` passes the spec through to `capcut compile` untouched. eyecut
+renames nothing and wraps nothing, so a feature capcut-cli gains arrives here for
+free — the cost is that compile's vocabulary is the vocabulary, warts and all.
 
-Scene boundaries are available (`ffmpeg scdet`, permissive threshold ~3.0) as a
-convenience for "show me one frame per shot". They are a sampling aid, not a
-detector: see *Out of scope*.
+**Verified working** **[proven]**: video / audio / text tracks · per-item `speed`,
+`volume`, `fontSize`, `color`, `sourceStart` · `transition` · `filter` · `effect`
+· `keyframe` on 11 properties · `audio-fade` · masks (nine shapes).
 
-### `music_grid(path)`
+**Available, never run** **[untested]**: `text-ranges`, `template`, `captions`,
+and the per-item `opacity` / `rotation` / `scale` / `x` / `y` fields.
 
-The one piece of real judgment that belongs in code rather than in the
-conversation, because it is DSP and Claude cannot hear.
+**Not reachable**: `text-style` (crashes capcut-cli 0.21.1) · fonts (CapCut's
+names are not published) · store-downloaded assets (`harvest-enums` is a path,
+not a built one) · compositing, blend modes, speed curves, motion tracking, and
+anything AI-driven in the app.
 
-- Tempo via `librosa.beat.beat_track`, with a second method for cross-check
-- **Report octave ambiguity rather than resolving it.** 68 vs 136 BPM is a false
-  choice — the grids are nested. Expose *cut density* (every 1/2/4 beats) as the
-  control **[proven]**
-- **Anchor phase to a detected event, not a global estimate.** The drop is a
-  strong, reliable onset; anchoring there agreed with independent phase estimation
-  to within 0.019s **[proven]**
-- Confidence = agreement between methods, not energy-on-grid. The energy metric is
-  biased toward slow tempos and picked 64.6 BPM (29% alignment) over 95.7 (71%)
-  **[proven failure]**
-- Surface disagreement to Claude, which asks the user. Methods agreed on 6 of 7
-  test tracks; failures were soft-transient material (cloud rap, processed edit
-  audio)
+Effects are named by slug from CapCut's own catalogue — 116 transitions, 345 scene
+effects, 95 character effects, 76 text intros, 10 filters, 9 masks — listed with
+`capcut enums --scene-effects` and friends. **Choosing one by name is easy;
+identifying which one produced a flash in someone else's video is guesswork** and
+stays out of scope.
 
-### `preview(project)`
+### What `eyecut.spec` rejects
 
-`capcut-cli render` so the user judges without opening CapCut **[untested]**.
+compile validates plenty on its own, and where it does, eyecut stays out of the
+way: a duplicated check drifts out of step with upstream. These are the mistakes
+compile accepts silently, or rejects only after seeding a draft directory. Every
+one cost a real debugging session.
+
+- **`start` is the timeline position; `sourceStart` is the in-point into the
+  source.** Three 4-second shots taken from 120s, 300s and 610s of a film compiled
+  to a **615-second draft** with two long gaps. `--check` accepts an unknown key
+  without complaint **[proven failure]**. The detectable half — two items
+  overlapping on one track — is refused.
+- **Keyframes are one operation per point, each with `time` and `value`.**
+  `from`/`to` is the natural guess; it compiles, `capcut lint` calls it clean, and
+  the draft holds `time_offset: null, values: [null]` — an animation that does
+  nothing **[proven failure]**.
+- **A whole-frame zoom is `uniform_scale`**, not `scale`. Eleven property names.
+- **Easings are hyphenated**: `ease-in-out`, not `ease_in_out`.
+- **`filter` and `effect` cover a span of timeline**, taking `start`, `duration`
+  and `slug` — and no `target`. Without a duration compile writes
+  `target_timerange.duration: null`, which nulls the whole draft's duration and
+  makes eyecut die reading it back **[proven failure]**.
+- **`intensity` is 0–1.** Written verbatim otherwise: `5.0` lands in the draft as
+  five times what the CapCut UI can express **[proven]**.
+- **`audio-fade` targets an audio item.**
+- **`text-style` is refused outright** — see below.
+
+### What `write_draft` repairs after the compile
+
+- **Speed.** compile writes `segment.speed` and leaves the speed *material* at 1.
+  **CapCut reads the material**, so a clip asked for 2× plays at 1× while its trim
+  is still cut for 2× — an edit wrong in a way that looks like bad footage.
+  `capcut lint` reports `speed-material-mismatch` and cannot fix it; `capcut speed`
+  re-syncs both without disturbing the timeranges **[proven, confirmed in the app]**.
+- **Masks.** compile has no mask operation at all, so `mask` is the one key eyecut
+  adds to compile's vocabulary, applied afterwards with `capcut mask` and matched
+  to the segment **by position** — the nth item of the spec's nth track of a type
+  is the nth segment of the built track of that type. Compile preserves both
+  orders and the filter/effect tracks it appends carry no items. If the counts
+  disagree the masks are skipped with a warning: a mask on the wrong shot is worse
+  than no mask.
+- **`constant_material_id` on every mask.** `capcut mask` leaves it empty; a
+  CapCut-authored mask carries a UUID that appears once in the draft and
+  references nothing. Found by asking the user to apply a circle mask by hand and
+  diffing the two entries — the same method that produced the `register_media`
+  fixture, and the only method that works for this class of question
+  **[proven, confirmed in the app]**.
+- **`tm_duration`**, which compile leaves at 0, listing the draft as 00:00.
+
+### Reading the app, not the files
+
+A draft that lints clean can still be wrong. `capcut lint` reported 0 errors on a
+mask that had not been confirmed in the app, and file-level evidence was read as
+proof twice — once concluding masks worked when unverified, once concluding they
+were broken from a screenshot that showed the mask *selected for editing*, where
+CapCut draws the full frame plus a guide rather than the cropped result.
+
+**The app is the standard.** Lint and file structure are necessary and not
+sufficient; a claim is `[proven]` only once it has been seen in CapCut.
 
 ---
 
@@ -119,74 +173,73 @@ originals.
 - Back up `root_meta_info.json` and `draft_meta_info.json` before touching them.
 - Atomic writes with `.bak`, matching capcut-cli's contract.
 - **Refuse to write while CapCut is running** — it caches both files in memory and
-  overwrites on quit **[proven]**
+  overwrites on quit. Closing the project is not enough; only quitting releases it
+  **[proven]**.
 - Never write media into a temp directory — CapCut needs the paths to persist, and
-  a scratchpad wipe took out generated audio mid-session **[proven failure]**
+  a scratchpad wipe took out generated audio mid-session **[proven failure]**.
+- Validate the spec *before* the running-CapCut guard, so a rejected spec leaves
+  no half-built project behind.
 
 ## Dependencies
 
-`capcut-cli` (Node, shelled out, JSON interface) · `ffmpeg`/`ffprobe` · `librosa` ·
-`numpy`. No vision model dependency: the client is the vision model.
-
-## Build order
-
-1. `register_media` — the differentiator, and the only thing here nobody else has.
-2. `write_draft` — needed to see a result at all.
-3. `extract_frames` — mostly written; `scripts/scan_experiment.py` has the ffmpeg
-   invocations to lift.
-4. `music_grid` — mostly written in the prototype, port it.
-5. `preview` — thin, last.
+`capcut-cli` (Node, shelled out, JSON interface) · `ffmpeg`/`ffprobe` · `numpy` ·
+`pillow`. No vision model dependency: the client is the vision model. No librosa —
+see `music_grid` below.
 
 ---
 
 ## Out of scope
 
-These were stages in the previous spec. They are recorded here because the
-findings cost real time to obtain, and because someone will propose them again.
+Recorded because the findings cost real time, and because someone will propose
+them again.
 
-**`scan` — batch shot description.** A vision pass over contact sheets producing
-`{description, subject, composition, lighting}` per shot, stored in `shots.json`
-for a later stage to query. Cut because the later stage is Claude, and Claude can
-look at the sheet itself. The pipeline only makes sense if selection is automated,
-and selection is not automated. `scripts/scan_experiment.py` and
-`scripts/describe_sheets.py` remain as experiments; neither is a build target.
+**`music_grid` — beat detection.** Was build step 4 of the previous spec and is
+cut. Not because it does not work — `~/editing/gojo/build/measure.py` finds a beat
+grid with two independent methods and cross-checks them, and the octave-ambiguity
+and drop-anchoring findings are real **[proven]**. It is cut because **it is about
+music, not about CapCut.** eyecut's one differentiator is writing a format nobody
+else writes; a beat detector belongs in the build scripts where it already lives,
+or in a tool of its own. The same test that cut it also cut `extract_frames` from
+the MCP surface.
 
-**`arrange` — automated shot placement.** Slot carving, energy matching, minimum
-source separation. Rejected twice on quality in the prototype **[proven failure]**;
-the conversation does this better and the user is present anyway.
+**`extract_frames`, `browse_shots`, `preview` as MCP tools.** Built, tested, and
+moved to CLIs. Claude has a shell; a tool that wraps five lines of ffmpeg is
+surface area without capability.
+
+**`scan` — batch shot description.** A vision pass producing `{description,
+subject, composition, lighting}` per shot for a later stage to query. Cut because
+the later stage is Claude, and Claude can look at the sheet itself.
+
+**`arrange` — automated shot placement.** Rejected twice on quality in the
+prototype **[proven failure]**; the conversation does this better and the user is
+present anyway.
 
 **`profile` — style extraction from a reference edit.** Recovered `shot_len_median`
-0.93s, RGB percentile grade, black/white points, 46% push detection, and 93% beat
-discipline from a 21.6s reference **[proven]** — real results, but it is a style
-opinion Claude can hold in context from watching frames. Revisit only if
-conversation-held style proves too vague in practice. `dissolve_ratio` was never
-soundly derived; see below.
+0.93s, RGB percentile grade, 46% push detection and 93% beat discipline from a
+21.6s reference **[proven]** — real results, but a style opinion Claude can hold in
+context from watching frames. `dissolve_ratio` was never soundly derived.
 
-**Scene-boundary detection as a *detector*.** `ffmpeg scdet` finds 176 cuts in 405s
-**[proven]**, but:
+**Scene-boundary detection as a *detector*.** `ffmpeg scdet` finds 176 cuts in
+405s **[proven]**, but:
 
 - **The threshold cannot be derived from the score distribution [proven failure].**
   `scdet` scores visual dissimilarity, not cuts: a well-matched cut scores low, a
   whip pan inside one shot scores high. On a full film (17,620 frames, 921
   candidates above 1.0) the distribution runs smooth from 36.6 down to 1.0 with no
-  gap, and gap-hunting locked onto the sparse top of the range and *under*-detected
-  — 95 shots against 106 from a plain fixed threshold.
+  gap, and gap-hunting *under*-detected — 95 shots against 106 from a fixed
+  threshold.
 - **Cluster boundaries, don't threshold frame-by-frame.** One cut trips `scdet` on
-  2+ adjacent frames and a dissolve across many — 326 raw qualifying frames for 215
-  shots on Sintel. Collapse each run to its peak frame.
+  2+ adjacent frames — 326 raw qualifying frames for 215 shots on Sintel. Collapse
+  each run to its peak.
 - **`scdet` cannot detect dissolves at all [proven failure]**, in three stages.
-  Width alone mislabelled 36.3-scoring hard cuts as dissolves (fast motion blurs a
-  cut across extra frames). A ≥6-frame-run rule could never fire — the widest
-  above-threshold run is 4 frames in Sintel, 5 in Tears of Steel, since a dissolve
-  by definition changes little frame to frame. The sustained *sub*-threshold bands
-  where dissolves must therefore live gave 10 and 12 candidates, of which both
-  checked by eye were false positives: a slow push-in through fog, and a credit
-  crawl. Frame-to-frame difference cannot separate "two images superimposed" from
-  "one image moving slowly". This is also why `profile`'s `dissolve_ratio` (8 of 14
-  recovered) should not be trusted — whatever produced it, it was not this signal.
+  Width alone mislabelled 36.3-scoring hard cuts as dissolves. A ≥6-frame-run rule
+  could never fire — the widest above-threshold run is 4 frames in Sintel, 5 in
+  Tears of Steel. The sustained *sub*-threshold bands gave 10 and 12 candidates, of
+  which both checked by eye were false positives: a slow push-in through fog, and a
+  credit crawl. Frame-to-frame difference cannot separate "two images superimposed"
+  from "one image moving slowly".
 - **Discard the first ~0.5s of scores on a clip extracted with `-ss`.** Seeking
-  starts the decoder mid-GOP and the opening frames score spuriously high — 4
-  invented boundaries in half a second.
+  starts the decoder mid-GOP — 4 invented boundaries in half a second.
 
 **Demucs stem separation** — quality too poor to be useful **[proven failure]**.
 
@@ -194,3 +247,17 @@ soundly derived; see below.
 
 **Identifying specific CapCut effect IDs from a reference.** You can see a flash;
 saying *which* of 345 effects it is, is guesswork.
+
+---
+
+## Upstream
+
+`text-style` crashes capcut-cli 0.21.1 with `Cannot read properties of undefined
+(reading 'alpha')` on `{"op": "text-style", "target": ..., "bold": true}`. eyecut
+refuses the op with an explanation rather than passing it through to crash; the
+refusal should be deleted when upstream fixes it. **Not yet reported.**
+
+The better end state for `register_media` is still upstreaming: `capcut fixture
+<project> --out <dir>` on a CapCut-authored draft produces exactly the evidence
+bundle `capcut-cli` says it lacks. Contributing it could move that tool out of
+eyecut entirely.
