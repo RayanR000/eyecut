@@ -107,7 +107,8 @@ Two things `write_draft` finishes after the compile, because compile does not:
 **speed** (it writes `segment.speed` but leaves the speed material at 1, and the
 app reads the material) and **masks** (compile has no mask operation at all, so
 `mask` is the one key eyecut adds to compile's vocabulary — nine shapes, applied
-with `capcut mask` and matched to the segment by position).
+with `capcut mask` and matched to the segment by position, then stamped with the
+`constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty).
 
 ```python
 {"path": src, "start": 0, "duration": 2, "sourceStart": 120, "speed": 2.0}

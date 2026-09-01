@@ -196,6 +196,7 @@ def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
 
     store = store or project_dir.parent
     warnings = []
+    applied = False
     for track_type, index, mask in wanted:
         segment_id = segments.get((track_type, index))
         if segment_id is None:
@@ -206,7 +207,31 @@ def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
         if code != 0:
             warnings.append(f"mask on {track_type} item {index} failed: "
                             f"{stderr.strip()[:120]}")
+        else:
+            applied = True
+    if applied:
+        stamp_mask_ids(project_dir)
     return warnings
+
+
+def stamp_mask_ids(project_dir: Path) -> int:
+    """Give every mask the `constant_material_id` CapCut gives its own.
+
+    `capcut mask` leaves the field empty; a mask CapCut authors carries a UUID
+    there. The id is self-contained -- it appears exactly once in the draft and
+    references nothing -- so a fresh one is as good as CapCut's own. Written to
+    match what a CapCut-authored draft looks like, captured by hand from the app.
+    """
+    draft_info = project_dir / "draft_info.json"
+    data = json.loads(draft_info.read_text())
+    stamped = 0
+    for mask in data.get("materials", {}).get("common_mask", []):
+        if not mask.get("constant_material_id"):
+            mask["constant_material_id"] = str(uuid.uuid4()).upper()
+            stamped += 1
+    if stamped:
+        draft_info.write_text(json.dumps(data, ensure_ascii=False))
+    return stamped
 
 
 def resync_speeds(project_dir: Path, *, runner=_capcut_runner,

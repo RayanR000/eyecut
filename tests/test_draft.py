@@ -351,3 +351,7 @@ def test_a_mask_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_dir, m
     masked = [s for s in segments if masks[0]["id"] in s.get("extra_material_refs", [])]
     assert len(masked) == 1
     assert masked[0]["target_timerange"]["start"] == 4_000_000, "the second clip, not the first"
+
+    # `capcut mask` leaves this empty; a CapCut-authored mask carries a UUID, and
+    # the shape was captured by hand from the app to find that out.
+    assert masks[0]["constant_material_id"], "must match what CapCut writes for its own"
