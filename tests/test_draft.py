@@ -7,11 +7,12 @@ the real one does, and every assertion here is on those files, never on the fake
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from eyecut.draft import CompileError, write_draft
+from eyecut.draft import CompileError, repair_sfx_materials, write_draft
 from eyecut.media import MediaProbe
 
 
@@ -618,11 +619,12 @@ def test_a_mask_on_the_base_track_does_not_land_on_the_overlay(tmp_path, drafts_
 
 @capcut_cli
 def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, monkeypatch):
-    """Background blur and crop, applied against the real CLI.
+    """Crop, applied against the real CLI.
 
-    `mix` and `chroma` were exercised here too until validation started refusing
-    them: they reach the draft exactly as asserted below and CapCut then throws
-    them away, so a green assertion here was evidence of nothing.
+    `mix`, `chroma` and `bgBlur` were exercised here too until validation started
+    refusing them. Each reached the draft exactly as asserted, and the app then
+    discarded it or drew nothing -- so a green assertion here was evidence of
+    nothing, which is the whole reason these are refused rather than documented.
 
     Each is a separate capcut-cli command against a segment id, so what this pins
     is the argv shape: a wrong flag name exits non-zero *after* the draft exists,
@@ -636,7 +638,7 @@ def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, mo
                     "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
     spec = {"name": "eyecut-item-ops", "tracks": [{"type": "video", "items": [
         {"path": str(source), "start": 0, "duration": 4, "sourceStart": 0,
-         "bgBlur": 3, "crop": {"ratio": "9:16"}},
+         "crop": {"ratio": "9:16"}},
         {"path": str(source), "start": 4, "duration": 4, "sourceStart": 8}]}]}
 
     draft = write_draft(spec, drafts_dir / "proj", [])
@@ -650,9 +652,6 @@ def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, mo
     styled = materials[decorated["material_id"]]
     untouched = materials[plain["material_id"]]
 
-    blurred = [c for c in built["materials"]["canvases"] if c["type"] == "canvas_blur"]
-    assert [c["blur"] for c in blurred] == [0.75], "level 3 is 0.75 behind the scenes"
-
     # 9:16 out of a 4:3 source keeps the middle 42% of the width, full height
     crop = styled["crop"]
     assert crop["upper_left_y"] == 0 and crop["lower_left_y"] == 1
@@ -660,76 +659,108 @@ def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, mo
     assert untouched["crop"]["lower_right_x"] == 1, "the second clip is uncropped"
 
 
-@capcut_cli
-def test_text_ranges_and_a_bubble_reach_the_caption(tmp_path, drafts_dir, monkeypatch):
-    """`textRanges` is multi-colour text -- one word gold, the rest the base style
-    -- and `bubble` is the speech-bubble shape behind it. Both were listed
-    reachable and neither had ever been run."""
-    monkeypatch.undo()
-    source = tmp_path / "a.mp4"
-    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
-                    "testsrc=size=320x240:rate=30:duration=20",
-                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
-    spec = {"name": "eyecut-text-ranges", "tracks": [
-        {"type": "video", "items": [
-            {"path": str(source), "start": 0, "duration": 6, "sourceStart": 0}]},
-        {"type": "text", "items": [
-            {"text": "GOLD and white", "start": 0, "duration": 3, "fontSize": 24,
-             "textRanges": [{"start": 0, "end": 4, "font_color": "#FFD700",
-                             "bold": True}],
-             "bubble": "cloud"}]}]}
+def test_an_sfx_segment_is_repaired_onto_an_audios_material():
+    """`capcut add-sfx` writes the sound effect into `materials.audio_effects` and
+    points the segment's `material_id` at it. CapCut resolves an audio segment
+    through `materials.audios`; a segment whose material is not there has no
+    material at all, so **CapCut deletes the whole track on save** [proven: the
+    verify draft came back with only its video track and both effect entries
+    gone].
 
-    draft = write_draft(spec, drafts_dir / "proj", [])
-
-    assert draft.warnings == []
-    built = json.loads((draft.path / "draft_info.json").read_text())
-    caption = built["materials"]["texts"][0]
-    content = json.loads(caption["content"])
-    styles = content["styles"]
-    assert len(styles) > 1, "the gold word is styled apart from the rest"
-    assert any(s["range"] == [0, 4] for s in styles), "the range the spec asked for"
-    assert caption.get("bubble_effect_id"), "the bubble shape reached the caption"
-
-
-@capcut_cli
-def test_an_sfx_track_is_built_after_the_compile(tmp_path, drafts_dir,
-                                                monkeypatch):
-    """compile knows video, audio and text. A sound effect is a catalogue lookup
-    on a track of its own, not reachable from a spec before.
-
-    A cover was built in the same pass here until validation started refusing it
-    -- `draft_info.cover` was written exactly as asserted, and CapCut's project
-    list read none of it.
-
-    These run last because they ADD segments: built earlier they would shift the
-    positions every per-segment op matches on. The mask here is the canary --
-    it must still land on the clip it names.
+    `audio_effects` is decoration applied *to* an audio material, not a substitute
+    for one -- the same shape as the speed bug, where the app reads the material
+    and not the segment.
     """
-    monkeypatch.undo()
-    source = tmp_path / "a.mp4"
-    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
-                    "testsrc=size=320x240:rate=30:duration=20",
-                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
-    sfx = json.loads(subprocess.run(["capcut", "enums", "--audio-effects"],
-                                    capture_output=True, text=True, check=True).stdout)
-    spec = {"name": "eyecut-tracks", "tracks": [
-                {"type": "video", "items": [
-                    {"path": str(source), "start": 0, "duration": 6, "sourceStart": 0,
-                     "mask": {"slug": "circle", "size": 0.6}}]},
-                {"type": "sfx", "name": "hits", "items": [
-                    {"slug": sfx[0]["slug"], "start": 1, "duration": 2, "volume": 0.5}]}]}
+    data = {"tracks": [
+        {"type": "video", "name": "video", "segments": [
+            {"id": "v0", "material_id": "vm", "extra_material_refs": []}]},
+        {"type": "audio", "name": "hits", "segments": [
+            {"id": "a0", "material_id": "sfx-mat", "volume": 0.5,
+             "target_timerange": {"start": 1_000_000, "duration": 2_000_000},
+             "source_timerange": {"start": 0, "duration": 2_000_000},
+             "extra_material_refs": [], "render_index": 0}]}],
+        "materials": {"videos": [{"id": "vm"}], "audios": [],
+                      "audio_effects": [
+                          {"id": "sfx-mat", "type": "sound_effect",
+                           "name": "Big House", "effect_id": "EFF",
+                           "resource_id": "RES", "md5": "abc", "path": ""}]}}
 
-    draft = write_draft(spec, drafts_dir / "proj", [])
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "draft_info.json").write_text(json.dumps(data))
 
-    assert draft.warnings == []
-    built = json.loads((draft.path / "draft_info.json").read_text())
-    audio = [t for t in built["tracks"] if t["type"] == "audio"]
-    assert len(audio) == 1 and len(audio[0]["segments"]) == 1
-    assert audio[0]["segments"][0]["target_timerange"] == {"start": 1_000_000,
-                                                           "duration": 2_000_000}
+        repaired = repair_sfx_materials(project)
 
-    masked = {m["id"] for m in built["materials"]["common_mask"]}
-    clip = next(s for t in built["tracks"] if t["type"] == "video"
-                for s in t["segments"])
-    assert set(clip["extra_material_refs"]) & masked, \
-        "the sfx track must not shift what the mask matched"
+        assert repaired == 1
+        out = json.loads((project / "draft_info.json").read_text())
+        audios = out["materials"]["audios"]
+        assert len(audios) == 1, "the segment now has a material CapCut will find"
+        material = audios[0]
+        assert material["type"] == "sound_effect"
+        # the catalogue identity has to survive: it is how CapCut resolves the
+        # store resource, and it is all `add-sfx` was given
+        assert (material["effect_id"], material["resource_id"]) == ("EFF", "RES")
+        assert material["name"] == "Big House"
+        assert material["duration"] == 2_000_000, "taken from the segment"
+
+        segment = out["tracks"][1]["segments"][0]
+        assert segment["material_id"] == material["id"]
+        assert segment["material_id"] != "sfx-mat"
+
+        # the effect entry stays, moved to where an effect belongs
+        assert [m["id"] for m in out["materials"]["audio_effects"]] == ["sfx-mat"]
+        assert "sfx-mat" in segment["extra_material_refs"]
+
+        # an audio segment CapCut authors carries these four, and compile's own
+        # audio segments carry them too -- without them the segment is malformed
+        kinds = {m["type"] for name in ("speeds", "placeholder_infos",
+                                        "sound_channel_mappings", "vocal_separations")
+                 for m in out["materials"][name]}
+        assert kinds == {"speed", "placeholder_info", "none", "vocal_separation"}
+        for name in ("speeds", "placeholder_infos", "sound_channel_mappings",
+                     "vocal_separations"):
+            assert out["materials"][name][0]["id"] in segment["extra_material_refs"]
+        assert segment["render_index"] == 11000, "compile's own audio render index"
+
+        assert segment["volume"] == 0.5, "the spec's volume is untouched"
+        assert segment["target_timerange"] == {"start": 1_000_000,
+                                               "duration": 2_000_000}
+
+
+def test_repairing_a_draft_with_no_sfx_changes_nothing():
+    data = {"tracks": [{"type": "video", "name": "video", "segments": [
+                {"id": "v0", "material_id": "vm", "extra_material_refs": []}]}],
+            "materials": {"videos": [{"id": "vm"}], "audios": []}}
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        before = json.dumps(data)
+        (project / "draft_info.json").write_text(before)
+
+        assert repair_sfx_materials(project) == 0
+        assert (project / "draft_info.json").read_text() == before
+
+
+def test_a_normal_audio_segment_is_left_alone():
+    """compile's audio tracks already point at `materials.audios`. Only what
+    `add-sfx` wrote is wrong, so only that is touched."""
+    data = {"tracks": [{"type": "audio", "name": "bed", "segments": [
+                {"id": "a0", "material_id": "music", "extra_material_refs": ["x"],
+                 "target_timerange": {"start": 0, "duration": 4_000_000}}]}],
+            "materials": {"audios": [{"id": "music", "type": "extract_music"}],
+                          "audio_effects": []}}
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "draft_info.json").write_text(json.dumps(data))
+
+        assert repair_sfx_materials(project) == 0
+        out = json.loads((project / "draft_info.json").read_text())
+        assert out["tracks"][0]["segments"][0]["material_id"] == "music"
+        assert len(out["materials"]["audios"]) == 1
+
+
+# `apply_track_ops` has no integration test any more: `sfx` is refused by
+# `validate_spec` (CapCut rewrites the material to `type: "none"` and the clip is
+# silent), and `sticker` needs a resource id harvested by hand from the app, which
+# a test cannot obtain. `repair_sfx_materials` keeps its unit tests -- the repair
+# is still what stops CapCut deleting the track outright, and is the half of the
+# problem that was solvable from the files.

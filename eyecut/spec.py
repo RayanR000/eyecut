@@ -61,10 +61,30 @@ DISCARDED_BY_APP = {
            "is opened and saved the app strips it from every material "
            "[proven on two independent drafts]. Layer the tracks and set "
            "`opacity` instead.",
+    "bgBlur": "CapCut renders it black. The `canvas_blur` material is written "
+              "with the right level and *survives* a save, unlike the two below "
+              "-- but the frame either side of a cropped clip is solid black, not "
+              "a blurred copy of the footage [proven]. Fill the space with a "
+              "second video track instead.",
+    "bubble": "a bubble shape is a store asset. The `bubble_effect_id` and its "
+              "`text_shape` filter are written correctly and CapCut renders "
+              "nothing, because the shape itself was never downloaded [proven]. "
+              "No slug can fix this -- `capcut enums` lists shapes the local app "
+              "does not have. Use `textStyle` for a background box, which works.",
     "chroma": "CapCut discards the chroma key, rewriting the entry into its own "
               "struct with the effect off (`{type: 'none', intensity_value: "
               "0.0}`) and keeping only the colour [proven]. Key the shot outside "
               "CapCut, or apply it by hand in the app.",
+}
+
+#: Track types in the same class as `DISCARDED_BY_APP`, mapped to why.
+DISCARDED_TRACKS = {
+    "sfx": "a sound effect names a store resource and `capcut add-sfx` has no "
+           "audio file to go with it (`path: \"\"`). eyecut repairs the material "
+           "shape so CapCut keeps the track instead of deleting it, but the app "
+           "then rewrites the material to `type: \"none\"` and the clip is silent "
+           "and undrawable [proven]. Put the effect on an ordinary `audio` track "
+           "naming a local sound file, which works.",
 }
 
 #: Same class, but a top-level key rather than an item one.
@@ -301,6 +321,9 @@ def validate_spec(spec: dict[str, Any]) -> None:
         if track_type not in TRACK_TYPES:
             raise SpecError(f"tracks[{track_index}]: unknown track type "
                             f"{track_type!r}. One of: {', '.join(TRACK_TYPES)}")
+        if track_type in DISCARDED_TRACKS:
+            raise SpecError(f"tracks[{track_index}]: a `{track_type}` track is "
+                            f"unusable — {DISCARDED_TRACKS[track_type]}")
         built_here = TRACK_OPS_BY_TYPE.get(track_type)
         for item_index, item in enumerate(track.get("items") or []):
             where = f"tracks[{track_index}].items[{item_index}]"

@@ -91,22 +91,22 @@ shapes) · **overlay / picture-in-picture** via a second *named* video track ·
 **captions** from an SRT (one text segment per cue, `sub_type: 1`).
 
 **Seen in the app** **[proven]**: `crop` (both a ratio and an explicit rect —
-the 9:16 slice and the middle-quarter zoom both render), `rotation`, and
-**two video tracks compositing simultaneously**, the overlay layered over the
-base rather than appended after it.
+the 9:16 slice and the middle-quarter zoom both render), `rotation`,
+`textRanges` (one word gold and bold, the rest plain, in a single text segment),
+and **two video tracks compositing simultaneously**, the overlay layered over the
+base rather than appended after it. Also confirmed in the app: a mask on the base
+of a two-video-track spec lands on the base, with the overlay untouched — the
+`(type, track, item)` matcher fix, checked where the files had lied before.
 
-**Written, reaching the draft, not yet seen** **[untested]**: `bgBlur`,
-`opacity`, `textRanges`, `bubble`, `sticker`, `sfx`. Each is confirmed
-by a test against the real CLI to land in the draft; the app has not confirmed
-any of them. `bgBlur`'s `canvas_blur` material survives a CapCut save, but the
-frame beside a cropped clip rendered black rather than a blurred fill, so what
-it does on screen is an open question.
+**Written, reaching the draft, not yet seen** **[untested]**: `opacity` and
+`sticker`. Confirmed by a test against the real CLI to land in the draft; the app
+has not confirmed either.
 
-**`mix` and `chroma` do not survive CapCut**, and **`cover` never reaches the
-project list** **[proven failure]**. All three are now *refused by
-`validate_spec`* rather than merely documented: each exits 0, lands in the file
-and lints clean, so nothing else in the build would ever tell the user. See
-below.
+**Five are refused by `validate_spec`** rather than merely documented, because
+each one exits 0, lands in the file and lints clean, so nothing else in the build
+would ever tell the user: `mix`, `chroma`, `cover`, `bgBlur` and `sfx` tracks.
+`bubble` is refused for a different reason — the store boundary below. Every one
+is a **[proven failure]** with the evidence recorded further down.
 
 **Templates — the reuse loop.** Style a title once in CapCut, then apply it
 anywhere: `capcut save-template <project> <segment-id> <name> --out t.json`
@@ -251,9 +251,9 @@ built, so that was not a corner case.
 
   So these two are reachable on paper and useless in practice: a spec can ask for
   them, the files say they applied, and the first time the user opens the project
-  the app discards them. The `canvas_blur` from `bgBlur` written in the same pass
-  survives the same save, so this is specific to these two, not a general
-  "CapCut rewrites everything".
+  the app discards them. This is not a general "CapCut rewrites everything": the
+  `canvas_blur` from `bgBlur`, written in the same pass, survives the same save
+  untouched. It just draws nothing — see below.
 
   Found only because the drafts were opened and the files re-read afterwards. The
   test suite is green on both keys — it asserts against the file eyecut wrote,
@@ -298,6 +298,30 @@ built, so that was not a corner case.
   where CapCut 9.x keeps a blend mode is simply unknown: it is not on the video
   material, and it is nowhere else in the saved file.
 
+- **`bgBlur` renders black, not a blurred fill** **[proven failure]**. The
+  `canvas_blur` material is written with `blur: 0.75` for level 3, attached to the
+  right segment's `extra_material_refs`, and it *survives* a CapCut save — which
+  made it look healthier than `mix` and `chroma` right up until someone looked.
+  On screen the frame either side of a 9:16 cropped clip is solid black, not a
+  blurred copy of the footage. Refused. To fill that space, put the footage on a
+  second video track behind the cropped one.
+- **A `bubble` shape is a store asset** **[proven failure]**. The
+  `bubble_effect_id` / `bubble_resource_id` pair and the matching `text_shape`
+  filter are all written and correctly referenced from the caption; CapCut renders
+  bare text. The shape was never downloaded, and **no slug fixes this** —
+  `capcut enums` lists what the catalogue has, not what the local app has. The
+  same boundary that makes `add-sticker` need a hand-harvested id. `textStyle`
+  gives a caption a background box and works.
+- **An `sfx` track cannot make a sound** **[proven failure]**. Two bugs stacked.
+  capcut-cli's `add-sfx` pushes its `sound_effect` material into
+  `materials.audio_effects` and points the segment's `material_id` at it, but
+  CapCut resolves audio segments through `materials.audios` — so the segment has
+  no material and **CapCut deletes the whole track on save**. `repair_sfx_materials`
+  fixes that half (see `eyecut/draft.py`), and with it the track and both segments
+  survive a save. But the effect ships with `path: ""` — no audio file, because
+  the sound is a store asset — so CapCut rewrites the material to `type: "none"`
+  and the clip is silent and undrawable. Put the effect on an ordinary `audio`
+  track naming a local sound file, which is **[proven]**.
 - **`bgBlur` is a level, not the fraction it stands for.** 1–4 map to 0.0625 /
   0.375 / 0.75 / 1.0. Passing `0.75` is the natural guess and gets a
   level-shaped error only after the draft exists, so it is refused up front.

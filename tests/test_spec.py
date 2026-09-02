@@ -380,15 +380,6 @@ def text(**item):
         {"text": "TITLE", "start": 0, "duration": 3, **item}]}
 
 
-def test_bg_blur_is_a_level_not_the_fraction_it_stands_for():
-    """`capcut bg-blur` takes 1-4, which map to 0.0625 / 0.375 / 0.75 / 1.0.
-    Passing the fraction is the natural mistake and gets a level-shaped error only
-    after the draft exists."""
-    validate_spec(spec(video(bgBlur=3)))
-    with pytest.raises(SpecError, match="`bgBlur` is a level"):
-        validate_spec(spec(video(bgBlur=0.75)))
-
-
 def test_crop_takes_exactly_one_of_ratio_or_rect():
     validate_spec(spec(video(crop="9:16")))
     validate_spec(spec(video(crop={"rect": [0.1, 0.1, 0.8, 0.8]})))
@@ -422,12 +413,6 @@ def test_text_ranges_on_a_clip_are_refused():
         validate_spec(spec(video(textRanges=[{"start": 0, "end": 3}])))
 
 
-def test_a_bubble_needs_a_slug_and_only_fits_a_caption():
-    validate_spec(spec(text(bubble="cloud")))
-    with pytest.raises(SpecError, match="`bubble` only applies to text items"):
-        validate_spec(spec(video(bubble="cloud")))
-
-
 def test_opacity_out_of_range_is_refused_because_compile_writes_it_verbatim():
     """`opacity` and `rotation` are compile's own item fields, so there is no CLI
     call to fail on them: an out-of-range value is simply written, the way
@@ -448,15 +433,11 @@ STICKER = {"type": "sticker", "items": [
 SFX = {"type": "sfx", "items": [{"slug": "big-house", "start": 0, "duration": 2}]}
 
 
-def test_sticker_and_sfx_tracks_pass_alongside_a_video_track():
-    validate_spec(spec(VIDEO, STICKER, SFX))
-
-
 def test_a_spec_of_only_built_after_tracks_leaves_compile_nothing_to_build():
-    """sticker and sfx are stripped out before compile sees the spec, so a spec
-    made of nothing else hands compile an empty track list."""
+    """sticker is stripped out before compile sees the spec, so a spec made of
+    nothing else hands compile an empty track list."""
     with pytest.raises(SpecError, match="at least one video, audio or text track"):
-        validate_spec(spec(SFX))
+        validate_spec(spec(STICKER))
 
 
 def test_a_sticker_needs_a_resource_id_because_there_is_no_slug_catalogue():
@@ -525,5 +506,48 @@ def test_keys_written_in_the_same_pass_still_pass():
     """The refusal is specific to the three, not a retreat from the coverage."""
     validate_spec(spec({"type": "video", "items": [
         {"path": "/footage/a.mp4", "start": 0, "duration": 4,
-         "bgBlur": 3, "crop": {"ratio": "9:16"}, "opacity": 0.5,
-         "rotation": 15}]}))
+         "crop": {"ratio": "9:16"}, "opacity": 0.5, "rotation": 15}]}))
+
+
+def test_an_sfx_track_is_refused_because_the_effect_has_no_audio_file():
+    with pytest.raises(SpecError, match="sfx"):
+        validate_spec(spec(VIDEO, SFX))
+
+
+def test_the_sfx_refusal_names_the_workaround():
+    """An `audio` track pointed at a local file does what `sfx` was for, and is
+    already proven. Without that in the message the reader has no way forward."""
+    with pytest.raises(SpecError) as excinfo:
+        validate_spec(spec(VIDEO, SFX))
+    assert "audio" in str(excinfo.value)
+
+
+def test_a_sticker_track_still_passes():
+    """The refusal is specific to sfx. Stickers are unproven, not disproven."""
+    validate_spec(spec(VIDEO, STICKER))
+
+
+def test_bg_blur_is_refused_because_it_renders_black():
+    """It survives a CapCut save, unlike mix and chroma -- and still shows nothing
+    but black beside a cropped clip."""
+    with pytest.raises(SpecError, match="bgBlur"):
+        validate_spec(spec(video(bgBlur=3)))
+
+
+def test_a_bubble_is_refused_because_the_shape_is_a_store_asset():
+    with pytest.raises(SpecError, match="bubble"):
+        validate_spec(spec(VIDEO, text(bubble="cloud")))
+
+
+def test_the_bubble_refusal_says_it_is_the_store_and_not_a_bad_slug():
+    """A reader who thinks the slug is wrong will go hunting the catalogue for a
+    better one. There isn't one -- no bubble slug can work."""
+    with pytest.raises(SpecError) as excinfo:
+        validate_spec(spec(VIDEO, text(bubble="cloud")))
+    assert "store" in str(excinfo.value).lower()
+
+
+def test_text_styling_still_passes_beside_the_refused_bubble():
+    validate_spec(spec(VIDEO, text(textStyle={"borderWidth": 0.08,
+                                              "shadow": True}),
+                       ))

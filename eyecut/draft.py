@@ -150,6 +150,8 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     # last, because these ADD segments: a sticker or sfx track built earlier
     # would shift the positions `_segment_ids` matches every op above on
     warnings += apply_track_ops(spec, project_dir, runner=runner, store=store)
+    # and immediately after, because `add-sfx` writes a segment CapCut deletes
+    repair_sfx_materials(project_dir)
     warnings += apply_cover(spec, project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
@@ -438,6 +440,115 @@ def stamp_mask_ids(project_dir: Path) -> int:
 
 
 AFTER_HOOKS["stamp_mask_ids"] = stamp_mask_ids
+
+
+#: The four companion materials every audio segment carries. CapCut authors them
+#: for its own, `capcut compile` writes them for an audio track, and `add-sfx`
+#: writes none -- so a repaired segment needs them built here. Field-for-field
+#: from capcut-cli's own `createCompanionMaterials`, which is what compile's
+#: working audio segments are made of.
+def _audio_companions() -> list[tuple[str, dict]]:
+    return [
+        ("speeds", {"id": str(uuid.uuid4()), "type": "speed", "speed": 1,
+                    "mode": 0, "curve_speed": None}),
+        ("placeholder_infos", {"id": str(uuid.uuid4()), "type": "placeholder_info",
+                               "error_path": "", "error_text": "",
+                               "meta_type": "none", "res_path": "", "res_text": ""}),
+        ("sound_channel_mappings", {"id": str(uuid.uuid4()), "type": "none",
+                                    "audio_channel_mapping": 0,
+                                    "is_config_open": False}),
+        ("vocal_separations", {"id": str(uuid.uuid4()), "type": "vocal_separation",
+                               "choice": 0, "enter_from": "", "final_algorithm": "",
+                               "production_path": "", "removed_sounds": [],
+                               "time_range": None}),
+    ]
+
+#: What an audio material carries beyond its own identity. Taken from the
+#: `extract_music` material capcut-cli's compile writes, and corroborated against
+#: a CapCut-authored draft that had music added by hand -- the same key set.
+_AUDIO_MATERIAL_DEFAULTS = {
+    "category_id": "", "category_name": "", "check_flag": 1, "music_id": "",
+    "request_id": "", "source_platform": 0, "team_id": "", "text_id": "",
+    "tone_category_id": "", "tone_category_name": "", "tone_effect_id": "",
+    "tone_effect_name": "", "tone_platform": "", "tone_second_category_id": "",
+    "tone_second_category_name": "", "tone_speaker": "", "tone_type": "",
+    "wave_points": [],
+}
+
+#: `compile` gives its audio segments this render index; a repaired sfx segment
+#: gets the same so it layers like one.
+_AUDIO_RENDER_INDEX = 11000
+
+
+def repair_sfx_materials(project_dir: Path) -> int:
+    """Move what `add-sfx` wrote onto a material CapCut will actually resolve.
+
+    `capcut add-sfx` pushes a `type: "sound_effect"` material into
+    `materials.audio_effects` and points the audio segment's `material_id` at it.
+    **CapCut resolves an audio segment through `materials.audios`.** A segment
+    whose material is not in that list has no material at all, so the app does
+    not merely ignore the effect -- it deletes the entire track on save
+    **[proven]**: the verify draft was reopened and came back with only its video
+    track, `materials.audios` empty and both `audio_effects` entries gone.
+
+    `audio_effects` is decoration applied *to* an audio material, not a substitute
+    for one. So the repair is to build the `audios` entry the segment should have
+    pointed at, keep the effect entry where an effect belongs (in the segment's
+    `extra_material_refs`), and give the segment the four companions and render
+    index that compile's own audio segments carry.
+
+    The catalogue identity -- `name`, `effect_id`, `resource_id`, `md5` -- is
+    carried across unchanged. It is how CapCut resolves the store resource, and it
+    is all `add-sfx` is given: the effect ships with `path: ""`, no local file.
+    Whether CapCut fetches the audio from those ids or needs the asset downloaded
+    first is the one thing this cannot answer from the files.
+
+    Returns the number of segments repaired, and writes nothing if none.
+    """
+    draft_info = project_dir / "draft_info.json"
+    data = json.loads(draft_info.read_text())
+    materials = data.setdefault("materials", {})
+    effects = {m["id"]: m for m in materials.get("audio_effects") or []
+               if m.get("type") == "sound_effect"}
+    if not effects:
+        return 0
+    audios = materials.setdefault("audios", [])
+
+    repaired = 0
+    for track in data.get("tracks", []):
+        if track.get("type") != "audio":
+            continue
+        for segment in track.get("segments", []):
+            effect = effects.get(segment.get("material_id"))
+            if effect is None:
+                continue  # a normal audio segment, already pointing at `audios`
+            duration = (segment.get("target_timerange") or {}).get("duration", 0)
+            material_id = str(uuid.uuid4())
+            audios.append({
+                "id": material_id,
+                "type": "sound_effect",
+                "name": effect.get("name", ""),
+                "path": effect.get("path", ""),
+                "duration": duration,
+                "effect_id": effect.get("effect_id", ""),
+                "resource_id": effect.get("resource_id", ""),
+                "md5": effect.get("md5", ""),
+                **_AUDIO_MATERIAL_DEFAULTS,
+            })
+            segment["material_id"] = material_id
+            refs = segment.setdefault("extra_material_refs", [])
+            # the effect itself, now decorating rather than standing in for the
+            # material, plus the companions the segment was built without
+            refs.append(effect["id"])
+            for group, companion in _audio_companions():
+                materials.setdefault(group, []).append(companion)
+                refs.append(companion["id"])
+            segment["render_index"] = _AUDIO_RENDER_INDEX
+            repaired += 1
+
+    if repaired:
+        draft_info.write_text(json.dumps(data, ensure_ascii=False))
+    return repaired
 
 
 def resync_speeds(project_dir: Path, *, runner=_capcut_runner,

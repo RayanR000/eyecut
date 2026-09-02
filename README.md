@@ -28,6 +28,7 @@ you.
 | `eyecut.media` | Register media in `draft_meta_info.json` so CapCut does not prompt to relink. |
 | `eyecut.frames` | Extract JPEGs and contact sheets from a source, plus what makes it unusable. |
 | `eyecut.shots` | Build a browsable shot picker for a source file. |
+| `eyecut.beatgrid` | Pick cut timings off a song's beat grid, by pinning regions. |
 | `eyecut.proxy` | Render a watchable proxy of a draft without opening CapCut. |
 | `eyecut.speech` | Find spoken lines in footage. |
 | `eyecut.static_server` | Static server with HTTP Range support, so `<video>` can seek. |
@@ -116,19 +117,20 @@ leaves the speed material at 1, and the app reads the material) and **masks**
 and matched to the segment by position, then stamped with the
 `constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty).
 
-And, as of 2026-09-01, everything else capcut-cli 0.21.1 can reach. `crop` (a
-ratio or a 0–1 rect) and `rotation` are confirmed in the app, as is a second
-video track compositing over the first. `bgBlur` (a level 1–4), `opacity`,
-`textRanges` (multi-colour text), `bubble`, and `sticker` / `sfx` tracks reach the
-draft against the real CLI but have not been seen in CapCut yet — build the
-checklists with `python3 scripts/verify_coverage.py --footage <clip>` and look.
+And, as of 2026-09-02, everything else capcut-cli 0.21.1 can reach — with the
+caveat that reaching the draft and reaching the screen turned out to be different
+things. Confirmed in the app: `crop` (a ratio or a 0–1 rect), `rotation`,
+`textRanges` (multi-colour text), and a second video track compositing over the
+first. Still unconfirmed: `opacity` and `sticker`.
 
-Three are reachable, **useless, and therefore refused**. `mix` (12 blend modes)
-and `chroma` are written correctly and then discarded the first time the project
-is opened and saved; `cover` writes a key CapCut's project list does not read, so
-the thumbnail stays black. `validate_spec` rejects all three with the reason,
-because each one exits 0 and lints clean — a build that accepted them would
-report success for work you will never see. SPEC.md has the evidence.
+**Five are refused**, each one written correctly, exiting 0 and linting clean
+before doing nothing: `mix` (12 blend modes) and `chroma` are discarded the first
+time CapCut saves; `cover` writes a key the project list never reads; `bgBlur`
+survives the save and draws solid black instead of a blurred fill; an `sfx` track
+survives too and is silent, because the sound is a store asset with no local file.
+`bubble` is refused for the same store reason. `validate_spec` rejects all of them
+with the reason and a workaround — a build that accepted them would report success
+for work you will never see. SPEC.md has the evidence.
 
 Still out of reach, because capcut-cli cannot reach them either: fonts
 (`capcut enums --fonts` returns `[]`), store-downloaded assets, speed curves,

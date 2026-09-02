@@ -3,8 +3,13 @@
 
     python3 scripts/verify_coverage.py --footage footage/clip.mp4
 
-Every key added for complete capcut-cli coverage is exercised across four drafts,
-each one clustered so a single open of CapCut answers for several keys at once.
+Every key added for complete capcut-cli coverage that is still worth looking at is
+exercised across three drafts, each one clustered so a single open of CapCut
+answers for several keys at once.
+
+There was a fourth, for `sfx` and `cover`. Both are refused now -- the app kept
+the sfx track only after eyecut repaired the material shape, and then rewrote it
+to `type: "none"`, silent -- so the draft had nothing left to show.
 Nothing here asserts: the assertions live in the test suite, and they check the
 files. **The app is the standard** -- a draft that lints clean can still be wrong,
 and file-level evidence has been misread twice, once concluding masks worked when
@@ -100,33 +105,6 @@ def text(source: Path, span: float) -> tuple[dict, list[str]]:
     ]
 
 
-def tracks(source: Path, span: float) -> tuple[dict, list[str]]:
-    """The tracks compile does not build, and the draft's thumbnail.
-
-    No sticker: `add-sticker` takes a raw resource id and there is no
-    `capcut enums --stickers` to get one from. Place a sticker by hand, run
-    `capcut harvest-enums`, then add it here with its id.
-
-    No cover either, for the opposite reason: it was tried, the thumbnail stayed
-    black, and `validate_spec` now refuses it.
-    """
-    catalogue = json.loads(subprocess.run(
-        ["capcut", "enums", "--audio-effects"],
-        capture_output=True, text=True, check=True).stdout)
-    slug = catalogue[0]["slug"]
-    spec = {"name": "eyecut-verify-tracks", "tracks": [
-                {"type": "video", "items": [
-                    {"path": str(source), "start": 0, "duration": SHOT * 2,
-                     "sourceStart": 0}]},
-                {"type": "sfx", "name": "hits", "items": [
-                    {"slug": slug, "start": 1, "duration": 2, "volume": 0.6},
-                    {"slug": slug, "start": 3.5, "duration": 2, "volume": 0.3}]}]}
-    return spec, [
-        f"an audio track named 'hits' with two {slug} effects, at 1s and 3.5s",
-        "the second is audibly quieter than the first",
-    ]
-
-
 def regression(source: Path, span: float) -> tuple[dict, list[str]]:
     """The bug this work started from: a mask on the base of a two-track spec.
 
@@ -158,7 +136,7 @@ def main() -> int:
                         help="append to each draft name, so a rebuild lands "
                              "beside the old one (nothing is ever deleted)")
     parser.add_argument("--only", action="append", default=None,
-                        help="build one draft by name (compositing/text/tracks/"
+                        help="build one draft by name (compositing/text/"
                              "regression); repeatable")
     args = parser.parse_args()
 
@@ -172,7 +150,6 @@ def main() -> int:
     store = (args.drafts or DRAFT_STORE).resolve()
     builders = {"compositing": lambda: compositing(source, span),
                 "text": lambda: text(source, span),
-                "tracks": lambda: tracks(source, span),
                 "regression": lambda: regression(source, span)}
     wanted = args.only or list(builders)
 
