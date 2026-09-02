@@ -27,10 +27,8 @@ you.
 | `eyecut.spec` | Reject a spec compile would accept but silently mis-build. |
 | `eyecut.media` | Register media in `draft_meta_info.json` so CapCut does not prompt to relink. |
 | `eyecut.frames` | Extract JPEGs and contact sheets from a source, plus what makes it unusable. |
-| `eyecut.shots` | Build a browsable shot picker for a source file. |
 | `eyecut.proxy` | Render a watchable proxy of a draft without opening CapCut. |
 | `eyecut.speech` | Find spoken lines in footage. |
-| `eyecut.static_server` | Static server with HTTP Range support, so `<video>` can seek. |
 | `eyecut.template` / `probe` | Supporting pieces for the above. |
 
 ## The rules `timeline` enforces
@@ -188,8 +186,6 @@ spec = {"name": "MY_PROJECT", "tracks": [
 ## Command line
 
 ```bash
-eyecut-shots FOOTAGE.mp4 --windows shots.txt --out browser/name
-eyecut-serve --root browser --port 8731
 eyecut-proxy MY_PROJECT -o preview.mp4
 eyecut-speech FOOTAGE.mp4 --windows shots.txt
 ```
@@ -202,8 +198,9 @@ count, frame interpolation, and motion-snapped selection — and each one scored
 well and then lost to a human looking at the clips. At the clip lengths these
 edits use, the viewer perceives a still image anyway, so "does the drawing change
 inside this clip" measures something nobody can see, and chasing it selects the
-smear frames. `eyecut.shots` therefore lists shots in chronological order and
-makes picking fast instead of making it automatic.
+smear frames. The browser pickers that make choosing fast by hand instead live in
+[eyepick](../eyepick), a separate repo: shot browsers and song-span selection. They
+emit JSON; nothing here imports them.
 
 **Frame interpolation.** It wins every measurement and reads as AI-generated.
 

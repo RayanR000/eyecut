@@ -6,10 +6,9 @@ every real behaviour (the relink-proof media entries, the CapCut-is-running
 refusal, the atomic writes) lives in eyecut.media / eyecut.draft.
 
 Two tools, and the surface is deliberately this small. The test a tool has to
-pass is not "is it useful" but "can Claude do it another way": frame extraction,
-shot browsing and proxy rendering are all a few lines of ffmpeg away from any
-shell, so they stay in the repo as CLIs (`eyecut-frames`, `eyecut-shots`,
-`eyecut-proxy`) rather than as tools here. Writing CapCut's format correctly is
+pass is not "is it useful" but "can Claude do it another way": frame extraction
+and proxy rendering are a few lines of ffmpeg away from any shell, so they stay in
+the repo as CLIs (`eyecut-frames`, `eyecut-proxy`) rather than as tools here. Writing CapCut's format correctly is
 the thing no shell gets you, and that is what these two do.
 """
 from __future__ import annotations

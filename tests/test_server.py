@@ -32,7 +32,7 @@ def clip(tmp_path):
 def test_the_surface_is_the_two_tools_no_shell_can_replace():
     """Exactly two, and the exactness is the point. Frame extraction, shot browsing
     and proxy rendering are a few lines of ffmpeg from any shell, so they are CLIs
-    (`eyecut-frames`, `eyecut-shots`, `eyecut-proxy`), not tools. Writing CapCut's
+    (`eyecut-frames`, `eyecut-proxy`), not tools. Writing CapCut's
     format is what no shell gets you."""
     names = {t.name for t in asyncio.run(srv.server.list_tools())}
     assert names == {"register_media", "write_draft"}

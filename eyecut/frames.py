@@ -13,7 +13,7 @@ it. All three of these were hit in one prototype session:
 * watermarks cluster in the first and last seconds — so the sampler reports those
   windows rather than trying to detect a logo.
 
-Sampling only. Shot *detection* lives in `eyecut.shots.detect_shots`, and the
+Sampling only. Shot *detection* lives in `eyepick.shots.detect_shots`, and the
 spec is explicit that it is a sampling aid, not a detector.
 """
 from __future__ import annotations
