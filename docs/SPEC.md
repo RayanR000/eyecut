@@ -93,8 +93,9 @@ modes** (all nine shipped shaders named back by the app's Blend panel, and
 surviving the save) · **`cover`** (the image appears in the project list without
 the draft ever being opened).
 
-Masks are **no longer in this list**: nine shapes reach the file and the Mask
-panel shows them, but nothing masks the picture. See below.
+Masks are **no longer in this list**, and no longer accepted: nine shapes reach
+the file and the Mask panel shows them, and nothing masks the picture. `mask` is
+refused by `validate_spec` with the rest of the no-ops. See below.
 
 **Seen in the app** **[proven]**: `crop` (both a ratio and an explicit rect —
 the 9:16 slice and the middle-quarter zoom both render), `rotation`,
@@ -109,9 +110,10 @@ not draw.
 Nothing is left in the **[untested]** column: every key and track type
 capcut-cli 0.21.1 can reach has now been seen in the app, or measured out of one.
 
-**Four are refused by `validate_spec`** rather than merely documented, because
+**Five are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
-would ever tell the user: `bgBlur`, `opacity`, and `sticker` and `sfx` tracks.
+would ever tell the user: `bgBlur`, `opacity`, `mask`, and `sticker` and `sfx`
+tracks. `mask` is the newest and the one that had been believed working longest.
 There were seven. `chroma` and `mix` fell to the `check_flag` discovery below and
 `cover` to reading what CapCut's project list actually opens — all three by the
 same method, which is to make the reference by hand and diff it.
@@ -426,7 +428,7 @@ built, so that was not a corner case.
   mask: still the only field that differs, and stamping it is still not enough to
   make a mask draw (see the mask entry under proven failures).
 - **A mask reaches the segment, shows in the panel, and masks nothing**
-  **[proven failure, cause not yet found]**. Found by opening the drafts instead
+  **[proven failure, measured out of an export]**. Found by opening the drafts instead
   of the files, which is the only way it could have been. In a mask-only draft
   and in a four-key draft alike, the masked clip renders **full-frame** at a
   playhead inside it — no cut, no canvas showing through — while Video > Mask
@@ -444,9 +446,21 @@ built, so that was not a corner case.
 
   Which means the earlier "masks work" reading was the panel, again — the same
   mistake the note at the end of this document already records twice, made a
-  third time on the same feature. The remaining test is the one `opacity` needed:
-  **export and measure**. Until that runs, masks are unproven at the render
-  level, and no edit should lean on one.
+  third time on the same feature.
+
+  **Then it was exported and measured**, the standard `opacity` had to be held
+  to, and the answer is the same as the preview's. A 2s draft of one clip under a
+  centred circle (`config.width` 0.28, `height` 0.5) exported at 720p renders the
+  **whole frame**: luminance at mid-height is 111 at the extreme left edge and 53
+  at the extreme right, where a 360px-wide ellipse would leave 0. The only black
+  in the frame is the letterbox above and below a 2.40:1 source — which is
+  exactly the trap here, because sampling the corners alone reads 0 and looks
+  like a working mask. So a mask does nothing at all: not in the preview, not in
+  the file's effect on the render, not in the export.
+
+  What is *not* yet known is why a mask CapCut itself wrote is equally inert,
+  which suggests the missing piece is somewhere neither the material nor the
+  segment ref — the shape of the next question, not of this answer.
 - **`tm_duration`**, which compile leaves at 0, listing the draft as 00:00.
 
 ### `check_flag`, and why a perfect material can do nothing

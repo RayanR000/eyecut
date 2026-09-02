@@ -12,9 +12,11 @@ the sfx track only after eyecut repaired the material shape, and then rewrote it
 to `type: "none"`, silent -- so the draft had nothing left to show.
 Nothing here asserts: the assertions live in the test suite, and they check the
 files. **The app is the standard** -- a draft that lints clean can still be wrong,
-and file-level evidence has been misread twice, once concluding masks worked when
-they were unverified and once concluding they were broken from a screenshot of a
-mask selected for editing.
+and file-level evidence has been misread three times, all on masks: once
+concluding they worked when they were unverified, once concluding they were
+broken from a screenshot of a mask selected for editing, and once concluding they
+worked off the app's own Mask panel -- which was wrong, and only an export
+settled it.
 
 So this script's output is a checklist. Open each draft, look, and record what you
 see against the "look for" lines it prints.
@@ -173,23 +175,27 @@ def mix(source: Path, span: float) -> tuple[dict, list[str]]:
 
 
 def regression(source: Path, span: float) -> tuple[dict, list[str]]:
-    """The bug this work started from: a mask on the base of a two-track spec.
+    """The bug this work started from: an item key on the base of a two-track spec.
 
     Keying segments on (type, position) alone put it on the overlay instead --
     silently, since the counts agreed. Worth an eye even though a test covers it,
     because this is the class of failure the files report as clean.
+
+    It was found with a mask, which is refused now: a mask reaches its segment and
+    masks nothing, measured on an export. So the draft carries a blend mode
+    instead, which lands the same way and can actually be seen.
     """
     shot = SHOT * 2
     spec = {"name": "eyecut-verify-regression", "tracks": [
         {"type": "video", "name": "base", "items": [
             {"path": str(source), "start": 0, "duration": shot, "sourceStart": 0,
-             "mask": {"slug": "circle", "size": 0.5}}]},
+             "mix": "screen"}]},
         {"type": "video", "name": "overlay", "items": [
             {"path": str(source), "start": shot / 4, "duration": shot / 2,
              "sourceStart": span / 3, "scale": 0.4, "x": 0.5, "y": 0.5}]}]}
     return spec, [
-        "the BASE clip is the one inside a circle",
-        "the small overlay in the corner is a full rectangle, unmasked",
+        "select the BASE clip: Video > Basic > Blend reads Mode: Screen",
+        "select the small overlay: Blend is unticked -- it asked for nothing",
     ]
 
 

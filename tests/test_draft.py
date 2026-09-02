@@ -327,38 +327,36 @@ def test_a_speed_change_reaches_the_material_the_app_actually_reads(tmp_path, dr
 
 
 @capcut_cli
-def test_a_mask_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_dir, monkeypatch):
-    """`mask` is the one key eyecut adds to compile's vocabulary, because compile
-    has no mask operation: it is applied afterwards with `capcut mask`, matched to
-    the segment by position. The second clip is masked and the first is not, so a
-    mask applied to the wrong segment fails this test.
+def test_an_item_key_reaches_the_segment_it_names(tmp_path, drafts_dir, monkeypatch):
+    """A post-compile item key is matched to its segment by position.
+
+    This was written against `mask`, the one key eyecut added to compile's
+    vocabulary; `mask` is refused now (it masks nothing -- see
+    `DISCARDED_BY_APP`), so the same matcher is exercised through `chroma`, which
+    goes down the identical path in `apply_item_ops`. The second clip is keyed
+    and the first is not, so a key applied to the wrong segment fails this test.
     """
     monkeypatch.undo()
     source = tmp_path / "a.mp4"
     subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
                     "testsrc=size=320x240:rate=30:duration=20",
                     "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
-    spec = {"name": "eyecut-mask", "tracks": [{"type": "video", "items": [
+    spec = {"name": "eyecut-positional", "tracks": [{"type": "video", "items": [
         {"path": str(source), "start": 0, "duration": 4, "sourceStart": 0},
         {"path": str(source), "start": 4, "duration": 4, "sourceStart": 8,
-         "mask": {"slug": "circle", "size": 0.6, "invert": True}}]}]}
+         "chroma": {"color": "#00ff00", "intensity": 0.6}}]}]}
 
     draft = write_draft(spec, drafts_dir / "proj", [])
 
     assert draft.warnings == []
     built = json.loads((draft.path / "draft_info.json").read_text())
-    masks = built["materials"]["common_mask"]
-    assert [m["name"] for m in masks] == ["Circle"]
-    assert masks[0]["config"]["invert"] is True
+    chromas = built["materials"]["chromas"]
+    assert len(chromas) == 1
 
     segments = [s for t in built["tracks"] for s in t["segments"]]
-    masked = [s for s in segments if masks[0]["id"] in s.get("extra_material_refs", [])]
-    assert len(masked) == 1
-    assert masked[0]["target_timerange"]["start"] == 4_000_000, "the second clip, not the first"
-
-    # `capcut mask` leaves this empty; a CapCut-authored mask carries a UUID, and
-    # the shape was captured by hand from the app to find that out.
-    assert masks[0]["constant_material_id"], "must match what CapCut writes for its own"
+    keyed = [s for s in segments if chromas[0]["id"] in s.get("extra_material_refs", [])]
+    assert len(keyed) == 1
+    assert keyed[0]["target_timerange"]["start"] == 4_000_000, "the second clip, not the first"
 
 
 @capcut_cli
@@ -580,27 +578,28 @@ def test_an_animation_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_
 
 
 @capcut_cli
-def test_a_mask_on_the_base_track_does_not_land_on_the_overlay(tmp_path, drafts_dir,
-                                                               monkeypatch):
+def test_an_item_key_on_the_base_track_does_not_land_on_the_overlay(tmp_path, drafts_dir,
+                                                                    monkeypatch):
     """Two video tracks are how an overlay is built, and the matcher has to tell
     them apart.
 
     Keying segments on (type, position) alone collapses every video track onto one
-    set of positions, so the LAST track of a type wins every key: a mask meant for
+    set of positions, so the LAST track of a type wins every key: a key meant for
     the base clip is applied to the overlay instead -- silently, because the counts
-    still agree and the mismatch guard never fires. (Masking the overlay hides the
-    bug, since the overlay is the track that overwrites.) The overlay here carries
-    no mask, so a mask that lands on it fails this test.
+    still agree and the mismatch guard never fires. (Keying the overlay hides the
+    bug, since the overlay is the track that overwrites.) Found with `mask`, which
+    is refused now, so it is checked with `chroma` down the same path. The overlay
+    here carries nothing, so a key that lands on it fails this test.
     """
     monkeypatch.undo()
     source = tmp_path / "a.mp4"
     subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
                     "testsrc=size=320x240:rate=30:duration=20",
                     "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
-    spec = {"name": "eyecut-overlay-mask", "tracks": [
+    spec = {"name": "eyecut-overlay-key", "tracks": [
         {"type": "video", "name": "base", "items": [
             {"path": str(source), "start": 0, "duration": 8, "sourceStart": 0,
-             "mask": {"slug": "circle", "size": 0.6}}]},
+             "chroma": {"color": "#00ff00", "intensity": 0.6}}]},
         {"type": "video", "name": "overlay", "items": [
             {"path": str(source), "start": 2, "duration": 4, "sourceStart": 8,
              "scale": 0.4}]}]}
@@ -609,15 +608,15 @@ def test_a_mask_on_the_base_track_does_not_land_on_the_overlay(tmp_path, drafts_
 
     assert draft.warnings == []
     built = json.loads((draft.path / "draft_info.json").read_text())
-    masked = {m["id"] for m in built["materials"]["common_mask"]}
-    assert len(masked) == 1, "one mask asked for, one mask written"
+    keyed = {m["id"] for m in built["materials"]["chromas"]}
+    assert len(keyed) == 1, "one key asked for, one written"
 
     tracks = {t.get("name"): t for t in built["tracks"] if t["type"] == "video"}
     base, overlay = tracks["base"]["segments"], tracks["overlay"]["segments"]
-    assert set(base[0]["extra_material_refs"]) & masked, \
-        "the base clip is the one that asked for a mask"
-    assert not (set(overlay[0]["extra_material_refs"]) & masked), \
-        "the overlay clip asked for no mask"
+    assert set(base[0]["extra_material_refs"]) & keyed, \
+        "the base clip is the one that asked for it"
+    assert not (set(overlay[0]["extra_material_refs"]) & keyed), \
+        "the overlay clip asked for nothing"
 
 
 @capcut_cli
@@ -911,7 +910,8 @@ def test_after_hooks_run_once_all_the_cli_calls_are_done():
     when one spec carries two: a mask beside a blend mode lost the blend mode,
     its `check_flag` and the repaired chroma with it, and every single-key draft
     built to check the repairs passed [proven]. So the hooks run after the loop,
-    not inside it.
+    not inside it. (Found with `mask`, which is refused now; a blend mode beside
+    a chroma key exercises the same two-hook ordering.)
     """
     timeline = []          # CLI calls and hook runs, in the order they happen
     original = dict(AFTER_HOOKS)
@@ -920,7 +920,7 @@ def test_after_hooks_run_once_all_the_cli_calls_are_done():
             AFTER_HOOKS[name] = lambda _p, n=name: timeline.append(("hook", n))
         spec = {"tracks": [{"type": "video", "items": [
             {"path": "/a.mp4", "start": 0, "duration": 2, "mix": "screen",
-             "mask": {"slug": "circle"}, "chroma": {"color": "#00ff00"}}]}]}
+             "chroma": {"color": "#00ff00"}}]}]}
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             (project / "draft_info.json").write_text(json.dumps(

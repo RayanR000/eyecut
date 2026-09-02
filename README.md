@@ -102,19 +102,15 @@ Choosing one by name is easy; identifying which one made the flash in someone
 else's video is not, and remains out of scope.
 
 `write_draft` finishes after the compile everything compile does not, driven by
-one table in `eyecut/ops.py`. The long-standing four:
+one table in `eyecut/ops.py`. The long-standing three (there were four; `mask`
+was the fourth until it was exported and measured):
 **animation** (`anim` on a video or text item — an intro, outro or combo from
 CapCut's 318 catalogue slugs, applied with `capcut text-anim` on a caption and
 `capcut image-anim` on a clip; without it every cut is a hard cut), **text look** (compile's `text-style` op crashes, and `fontSize`/`color` cannot
 give a caption the border or shadow that makes it readable over footage — so
 `textStyle` is an item key applied afterwards with `capcut text-style`, the
 standalone command that works), **speed** (compile writes `segment.speed` but
-leaves the speed material at 1, and the app reads the material) and **masks**
-(compile has no mask operation at all — nine shapes, applied with `capcut mask`
-and matched to the segment by position, then stamped with the
-`constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty
-— which puts the mask in the file and in the app's Mask panel, and still does not
-mask the picture; see the mask entry in `docs/SPEC.md`), **chroma** (`capcut chroma` puts the right material in the right place under
+leaves the speed material at 1, and the app reads the material), **chroma** (`capcut chroma` puts the right material in the right place under
 field names CapCut never reads — `intensity` for `intensity_value` and five more
 — and the app only honours it once `check_flag` on the video material has bit 32
 set, which nothing else writes), **blend modes** (`capcut mix-mode` writes a
@@ -130,9 +126,11 @@ things. Confirmed in the app: `crop` (a ratio or a 0–1 rect), `rotation`,
 `textRanges` (multi-colour text), and a second video track compositing over the
 first.
 
-**Four are refused**, each one written correctly, exiting 0 and linting clean
+**Five are refused**, each one written correctly, exiting 0 and linting clean
 before doing nothing: `bgBlur` survives the save and draws solid black instead of
-a blurred fill; `opacity` composites fully opaque; a `sticker` track names an id
+a blurred fill; `opacity` composites fully opaque; a `mask` reaches its segment,
+shows ticked in the app's own Mask panel and cuts nothing (measured on an export,
+and a mask CapCut applies by hand is just as inert); a `sticker` track names an id
 with no local asset; and an `sfx` track survives and is silent, for the same
 store-asset reason. `mix` and `cover` were on this list until the app was asked
 what it actually reads — both work now, and both were checked in the app rather

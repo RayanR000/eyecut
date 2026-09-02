@@ -178,29 +178,28 @@ def test_span_operations_take_no_target():
              "target": "shot0"}]))
 
 
-def test_a_mask_on_a_video_item_passes():
-    validate_spec(spec({"type": "video", "items": [
-        {"path": "/f/a.mp4", "start": 0, "duration": 4,
-         "mask": {"slug": "circle", "size": 0.6, "feather": 0.2}}]}))
+def test_a_mask_is_refused_however_it_is_written():
+    """`mask` used to be the headline key eyecut added to compile's vocabulary,
+    and it masks nothing: proven on an export, and equally inert for a mask
+    CapCut applied by hand. It is refused before the draft exists, because
+    everything downstream reports success -- the CLI exits 0, the material is
+    correct, `capcut lint` is clean and the app's own Mask panel shows the shape
+    ticked. Refused for any shape and in either spelling, dict or bare slug.
+    """
+    for value in ({"slug": "circle", "size": 0.6, "feather": 0.2},
+                  {"slug": "heart", "invert": True},
+                  "circle"):
+        with pytest.raises(SpecError, match="masks nothing"):
+            validate_spec(spec({"type": "video", "items": [
+                {"path": "/f/a.mp4", "start": 0, "duration": 4, "mask": value}]}))
 
 
-def test_a_bare_mask_slug_is_allowed():
-    validate_spec(spec({"type": "video", "items": [
-        {"path": "/f/a.mp4", "start": 0, "duration": 4, "mask": "circle"}]}))
-
-
-def test_an_unknown_mask_slug_names_the_nine():
-    with pytest.raises(SpecError, match="circle"):
-        validate_spec(spec({"type": "video", "items": [
-            {"path": "/f/a.mp4", "start": 0, "duration": 4, "mask": "vignette"}]}))
-
-
-def test_a_mask_on_audio_or_text_is_refused():
-    """`mask` is eyecut's own key, not compile's -- it is applied afterwards with
-    `capcut mask`, which only means anything on a visual segment."""
-    with pytest.raises(SpecError, match="video"):
+def test_a_mask_on_audio_or_text_is_refused_too():
+    """Refused for the discarded reason before the applicability one, since a
+    mask on an audio item is two problems and the first is fatal."""
+    with pytest.raises(SpecError, match="masks nothing"):
         validate_spec(spec(AUDIO_WITH_MASK))
-    with pytest.raises(SpecError, match="video"):
+    with pytest.raises(SpecError, match="masks nothing"):
         validate_spec(spec(TEXT_WITH_MASK))
 
 
@@ -208,19 +207,6 @@ AUDIO_WITH_MASK = {"type": "audio", "items": [
     {"path": "/m/bed.wav", "start": 0, "duration": 4, "mask": "circle"}]}
 TEXT_WITH_MASK = {"type": "text", "items": [
     {"text": "T", "start": 0, "duration": 4, "mask": "circle"}]}
-
-
-def test_mask_options_must_be_numbers():
-    with pytest.raises(SpecError, match="size"):
-        validate_spec(spec({"type": "video", "items": [
-            {"path": "/f/a.mp4", "start": 0, "duration": 4,
-             "mask": {"slug": "circle", "size": "big"}}]}))
-
-
-def test_invert_is_the_one_boolean():
-    validate_spec(spec({"type": "video", "items": [
-        {"path": "/f/a.mp4", "start": 0, "duration": 4,
-         "mask": {"slug": "heart", "invert": True}}]}))
 
 
 def test_two_unnamed_video_tracks_would_merge_and_collide():
