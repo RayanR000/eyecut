@@ -190,6 +190,7 @@ def apply_item_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     segments = None  # read once, and only if something asks for it
     store = store or project_dir.parent
     warnings: list[str] = []
+    pending: list[str] = []
     for op in ITEM_OPS:
         applied = False
         for where, _item, value in _spec_items(spec, op.key, types=op.tracks):
@@ -207,8 +208,15 @@ def apply_item_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
                                 f"{stderr.strip()[:120]}")
             else:
                 applied = True
-        if applied and op.after is not None:
-            AFTER_HOOKS[op.after](project_dir)
+        if applied and op.after is not None and op.after not in pending:
+            pending.append(op.after)
+    # after every CLI call, not after each one. Each `capcut` command rewrites
+    # draft_info.json from what it recognises, so a material a hook adds is
+    # dropped by the next op's call -- silently, and only when a spec carries
+    # both. Single-key drafts never showed it [proven]: a mask and a blend mode
+    # in one spec lost the blend mode, its `check_flag` and the repaired chroma.
+    for hook in pending:
+        AFTER_HOOKS[hook](project_dir)
     return warnings
 
 
@@ -290,23 +298,44 @@ def apply_track_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     return warnings
 
 
+#: What CapCut names its own thumbnail, and the size it writes. Every draft's
+#: `draft_meta_info.draft_cover` already says `draft_cover.jpg` -- the template's
+#: default, which eyecut inherits -- so the only thing missing has always been a
+#: file at that name. Read off 28 CapCut-authored drafts, all 1920x1080 [proven].
+COVER_NAME = "draft_cover.jpg"
+COVER_SIZE = (1920, 1080)
+
+
 def apply_cover(spec: dict, project_dir: Path, *, runner=_capcut_runner,
                 store: Path | None = None) -> list[str]:
-    """Set the draft's thumbnail from `spec.cover`.
+    """Write the thumbnail CapCut's project list actually reads.
 
-    CapCut re-renders the thumbnail on next open, so this only has to name the
-    image and the frame it stands for.
+    `capcut add-cover` writes `draft_info.cover` and nothing else -- no image
+    file, and the list goes on showing black [proven]. But the list is not
+    reading that key at all: it opens `draft_cover.jpg` beside the draft, the
+    name the meta already carries. So this does not need the CLI. It renders the
+    caller's image to that name at CapCut's own size, letterboxed rather than
+    stretched, which is what makes the thumbnail appear without the project ever
+    being opened.
+
+    `time` is accepted and ignored: it addressed a frame of the timeline for a
+    key nothing reads. The image is the cover.
     """
     cover = spec.get("cover")
     if cover is None:
         return []
     if isinstance(cover, str):
         cover = {"path": cover}
-    argv = ["capcut", "add-cover", str(project_dir), cover["path"]]
-    if cover.get("time") is not None:
-        # the CLI takes milliseconds; the spec is in seconds like everything else
-        argv += ["--time", str(int(cover["time"] * 1000))]
-    code, stderr = runner(argv, store or project_dir.parent)
+    source = Path(cover["path"])
+    if not source.is_file():
+        return [f"cover failed: no such file: {source}"]
+    width, height = COVER_SIZE
+    code, stderr = runner(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(source), "-frames:v", "1",
+         "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+         str(project_dir / COVER_NAME)],
+        store or project_dir.parent)
     return [] if code == 0 else [f"cover failed: {stderr.strip()[:120]}"]
 
 
@@ -545,6 +574,104 @@ def repair_chroma_materials(project_dir: Path) -> int:
 
 
 AFTER_HOOKS["repair_chroma_materials"] = repair_chroma_materials
+
+
+#: CapCut ships its blend shaders here, with a manifest naming each one's
+#: `effectId`, `resourceId` and file. Reading it is what made a hand-harvested
+#: catalogue unnecessary -- the sticker id had to be captured from the app
+#: because no such manifest exists for stickers.
+MIX_MODE_MANIFEST = Path("/Applications/CapCut.app/Contents/Resources/MixMode/"
+                         "MixMode.json")
+
+#: `capcut mix-mode`'s slug -> the manifest's `nameId`. The internal names are
+#: not the UI's: `color_filter` is Screen (confirmed against a blend mode set by
+#: hand, which wrote `effect_id: 871339`), and the rest read across from the
+#: Chinese originals -- `dark_en` 变暗 Darken, `bright_en` 变亮 Lighten,
+#: `glare_pc` 强光 Hard Light, `darken_color` 颜色加深 Color Burn.
+#: `normal` is absent on purpose: it is the no-material case.
+MIX_MODE_NAME_IDS = {
+    "multiply": "multiply_blend_mode", "screen": "color_filter",
+    "overlay": "over_lay", "soft-light": "soft_light", "hard-light": "glare_pc",
+    "color-dodge": "color_dodge", "color-burn": "darken_color",
+    "darken": "dark_en", "lighten": "bright_en",
+}
+
+#: `capcut mix-mode` accepts these and CapCut ships no shader for them, so the
+#: material could be written and would name nothing. Refused in `eyecut.spec`.
+MIX_MODES_WITHOUT_A_SHADER = ("difference", "exclusion")
+
+
+def _mix_mode_catalogue() -> dict:
+    """The manifest, keyed by `nameId`. Empty if this install has no bundle."""
+    if not MIX_MODE_MANIFEST.exists():
+        return {}
+    manifest = json.loads(MIX_MODE_MANIFEST.read_text())
+    return {entry["nameId"]: entry for entry in manifest.get("resourceList", [])}
+
+
+def repair_mix_modes(project_dir: Path) -> int:
+    """Move the blend mode to where CapCut keeps it, and let the app read it.
+
+    `capcut mix-mode` writes `mix_mode: "Screen"` as a string field on the video
+    material -- a field CapCut has no reader for, which is why it is stripped on
+    the first save rather than honoured [proven]. CapCut keeps a blend mode as
+    its own material in `materials.effects`, referenced from the segment, and
+    only draws it once `check_flag` on the video material has bit 8 set.
+
+    So this reads the CLI's string field, builds the material the app expects
+    from the manifest in CapCut's own bundle, references it from every segment
+    using that video material, sets the flag, and deletes the string. Returns the
+    number of segments given a blend mode.
+    """
+    draft_info = project_dir / "draft_info.json"
+    data = json.loads(draft_info.read_text())
+    catalogue = _mix_mode_catalogue()
+    materials = data.setdefault("materials", {})
+    effects = materials.setdefault("effects", [])
+
+    wanted = {m["id"]: m.pop("mix_mode") for m in materials.get("videos", [])
+              if isinstance(m.get("mix_mode"), str)}
+    if not wanted:
+        return 0
+
+    applied = 0
+    for track in data.get("tracks", []):
+        if track.get("type") != "video":
+            continue
+        for segment in track.get("segments", []):
+            display = wanted.get(segment.get("material_id"))
+            if display is None:
+                continue
+            slug = display.lower().replace(" ", "-")
+            if slug == "normal":
+                applied += 1          # nothing to reference: normal is the default
+                continue
+            entry = catalogue.get(MIX_MODE_NAME_IDS.get(slug, ""))
+            if entry is None:
+                continue              # refused in validation; nothing to write here
+            material = {
+                "id": str(uuid.uuid4()).upper(), "type": "mix_mode",
+                "name": display, "effect_id": entry["effectId"],
+                "resource_id": entry["resourceId"],
+                "path": str(MIX_MODE_MANIFEST.parent / entry["path"]),
+                "value": 1.0, "visible": True, "platform": "all",
+                "apply_target_type": 0, "item_effect_type": 0,
+                "sub_type": "manual_stretch", "adjust_params": [],
+                "third_resource_id": "", "report_name": "", "category_id": "",
+                "category_name": "", "category_key": "", "sub_category_id": "",
+                "sub_category_name": "", "source_platform": 0, "version": "",
+                "time_range": None, "formula_id": "",
+            }
+            effects.append(material)
+            segment.setdefault("extra_material_refs", []).append(material["id"])
+            _set_check_flag(data, {segment["material_id"]}, CHECK_FLAG_BLEND)
+            applied += 1
+
+    draft_info.write_text(json.dumps(data, ensure_ascii=False))
+    return applied
+
+
+AFTER_HOOKS["repair_mix_modes"] = repair_mix_modes
 
 
 #: The four companion materials every audio segment carries. CapCut authors them

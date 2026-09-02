@@ -479,11 +479,23 @@ def test_an_unknown_track_type_is_named_with_the_ones_that_exist():
 # broken on the way.
 
 
-def test_mix_is_refused_because_capcut_discards_it():
-    with pytest.raises(SpecError, match="mix"):
+def test_mix_is_accepted_now_that_the_material_is_built_where_capcut_keeps_it():
+    """It was refused while `capcut mix-mode`'s string field was all there was.
+    `repair_mix_modes` builds the material CapCut actually reads, out of the
+    manifest in the app's own bundle."""
+    validate_spec(spec({"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+         "mix": "screen"}]}))
+
+
+def test_a_blend_mode_capcut_ships_no_shader_for_is_refused():
+    """`capcut mix-mode` takes all twelve; the app's MixMode.json holds ten, and
+    neither difference nor exclusion is among them. Writing one would name a
+    resource that is not there -- the failure `sticker` dies of, caught early."""
+    with pytest.raises(SpecError, match="ships no shader"):
         validate_spec(spec({"type": "video", "items": [
             {"path": "/footage/a.mp4", "start": 0, "duration": 4,
-             "mix": "screen"}]}))
+             "mix": "difference"}]}))
 
 
 def test_chroma_is_accepted_now_that_the_material_is_repaired():
@@ -495,10 +507,31 @@ def test_chroma_is_accepted_now_that_the_material_is_repaired():
          "chroma": {"color": "#00FF00", "intensity": 0.6}}]}))
 
 
-def test_cover_is_refused_because_the_project_list_ignores_it():
-    s = spec()
+def test_a_cover_is_accepted_now_that_eyecut_writes_the_image_itself():
+    """Refused while the only route was `capcut add-cover`, which writes a key
+    the project list does not read. The list reads `draft_cover.jpg` beside the
+    draft, so eyecut renders it and the CLI is not involved."""
+    s = spec({"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4}]})
     s["cover"] = {"path": "/tmp/cover.png", "time": 1}
-    with pytest.raises(SpecError, match="cover"):
+    validate_spec(s)
+
+
+def test_a_relative_cover_path_is_refused():
+    """Same reason every other path in a spec must be absolute: the draft is
+    written somewhere the caller never named, and nothing resolves it for them."""
+    s = spec({"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4}]})
+    s["cover"] = {"path": "cover.png"}
+    with pytest.raises(SpecError, match="must be absolute"):
+        validate_spec(s)
+
+
+def test_an_unknown_cover_key_is_named():
+    s = spec({"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4}]})
+    s["cover"] = {"path": "/tmp/cover.png", "frame": 12}
+    with pytest.raises(SpecError, match="unknown key 'frame'"):
         validate_spec(s)
 
 
@@ -507,8 +540,8 @@ def test_the_refusal_says_why_and_not_merely_that_it_is_unknown():
     with pytest.raises(SpecError) as excinfo:
         validate_spec(spec({"type": "video", "items": [
             {"path": "/footage/a.mp4", "start": 0, "duration": 4,
-             "mix": "screen"}]}))
-    assert "discard" in str(excinfo.value).lower()
+             "bgBlur": 3}]}))
+    assert "black" in str(excinfo.value).lower()
 
 
 def test_keys_written_in_the_same_pass_still_pass():

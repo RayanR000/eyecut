@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from eyecut.ops import (ITEM_OPS, MEDIA_TRACKS, TRACK_OPS_BY_TYPE,
-                        TRACK_TYPES, SpecError)
+                        TRACK_TYPES, SpecError, _check_number, _require_dict)
 
 US = 1_000_000
 
@@ -56,16 +56,10 @@ FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json"}
 #: point at which the user finds out, and a build that reported success for work
 #: they will never see is the failure this module exists to prevent.
 DISCARDED_BY_APP = {
-    "mix": "CapCut discards blend modes. `capcut mix-mode` writes `mix_mode` "
-           "onto the video material correctly, and the first time the project "
-           "is opened and saved the app strips it from every material "
-           "[proven on two independent drafts]. Layer the tracks and let the "
-           "top one cover the bottom, or composite outside CapCut -- `opacity` "
-           "is not the workaround it looks like; see below.",
     "bgBlur": "CapCut renders it black. The `canvas_blur` material is written "
-              "with the right level and *survives* a save, unlike the two below "
-              "-- but the frame either side of a cropped clip is solid black, not "
-              "a blurred copy of the footage [proven]. Fill the space with a "
+              "with the right level and *survives* a save, unlike `mix` -- but "
+              "the frame either side of a cropped clip is solid black, not a "
+              "blurred copy of the footage [proven]. Fill the space with a "
               "second video track instead.",
     "bubble": "a bubble shape is a store asset. The `bubble_effect_id` and its "
               "`text_shape` filter are written correctly and CapCut renders "
@@ -110,15 +104,6 @@ DISCARDED_TRACKS = {
 }
 
 #: Same class, but a top-level key rather than an item one.
-DISCARDED_COVER = (
-    "CapCut's project list never reads it. `capcut add-cover` exits 0 and writes "
-    "`draft_info.cover`, but produces no `draft_cover.jpg` and leaves "
-    "`draft_meta_info.draft_cover` pointing at a file that does not exist, so the "
-    "thumbnail stays black -- identical to a draft that asked for no cover "
-    "[proven]. Opening the project once lets CapCut generate its own thumbnail, "
-    "which is the only way to get one."
-)
-
 BROKEN_UPSTREAM = {"text-style": "capcut-cli 0.21.1 crashes on it "
                                  "(\"Cannot read properties of undefined (reading 'alpha')\"). "
                                  "Set `textStyle` on the text item instead — the same "
@@ -258,18 +243,33 @@ def _check_span(op: dict, where: str) -> None:
 
 
 def _check_cover(cover: Any) -> None:
-    """The draft's thumbnail -- refused, because setting it does nothing.
+    """The draft's thumbnail: `{path, time}`, or a bare path.
 
-    Kept as a named key with a reason rather than dropped to "unknown key": a
-    spec that asks for a cover is asking for something reasonable, and the reader
-    needs to know the app is what refuses it, not eyecut. If capcut-cli ever
-    learns to write `draft_meta_info.draft_cover` and copy the image into the
-    draft, this becomes a shape check again -- the shape it used to check was
-    `{path, time}`.
+    Refused for a long time, because `capcut add-cover` writes a key CapCut's
+    project list does not read. eyecut writes the image itself now -- the list
+    reads `draft_cover.jpg` beside the draft, and the meta already names it --
+    so the key is a shape check again. `time` is accepted and ignored; it
+    addressed a frame for the key nothing reads.
     """
     if cover is None:
         return
-    raise SpecError(f"spec.cover is unusable — {DISCARDED_COVER}")
+    if isinstance(cover, str):
+        cover = {"path": cover}
+    _require_dict(cover, "cover", "spec", "path/time")
+    unknown = set(cover) - {"path", "time"}
+    if unknown:
+        raise SpecError(f"spec.cover: unknown key {sorted(unknown)[0]!r}. "
+                        f"One of: path, time")
+    path = cover.get("path")
+    if not isinstance(path, str) or not path:
+        raise SpecError("spec.cover needs `path` (an image file)")
+    if not Path(path).is_absolute():
+        raise SpecError(f"spec.cover `path` must be absolute, got {path!r} — "
+                        f"nothing resolves it for you, and the draft is written "
+                        f"somewhere the caller never named")
+    time = cover.get("time")
+    if time is not None:
+        _check_number(time, "cover `time` (seconds)", "spec")
 
 
 def _check_item_ops(item: dict, track_type: str, where: str) -> None:

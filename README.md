@@ -112,11 +112,17 @@ standalone command that works), **speed** (compile writes `segment.speed` but
 leaves the speed material at 1, and the app reads the material) and **masks**
 (compile has no mask operation at all — nine shapes, applied with `capcut mask`
 and matched to the segment by position, then stamped with the
-`constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty)
-and **chroma** (`capcut chroma` puts the right material in the right place under
+`constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty
+— which puts the mask in the file and in the app's Mask panel, and still does not
+mask the picture; see the mask entry in `docs/SPEC.md`), **chroma** (`capcut chroma` puts the right material in the right place under
 field names CapCut never reads — `intensity` for `intensity_value` and five more
 — and the app only honours it once `check_flag` on the video material has bit 32
-set, which nothing else writes).
+set, which nothing else writes), **blend modes** (`capcut mix-mode` writes a
+string field onto the video material; CapCut keeps a blend mode as its own
+material in `materials.effects`, built here from the manifest in the app's own
+bundle and gated behind `check_flag` bit 8) and the **cover** (the project list
+reads `draft_cover.jpg` beside the draft, which eyecut renders itself — the CLI's
+`add-cover` writes a key nothing reads).
 
 And, as of 2026-09-02, everything else capcut-cli 0.21.1 can reach — with the
 caveat that reaching the draft and reaching the screen turned out to be different
@@ -124,10 +130,14 @@ things. Confirmed in the app: `crop` (a ratio or a 0–1 rect), `rotation`,
 `textRanges` (multi-colour text), and a second video track compositing over the
 first.
 
-**Six are refused**, each one written correctly, exiting 0 and linting clean
-before doing nothing: `mix` (12 blend modes) is discarded the first time CapCut saves; `cover` writes a key the project list never reads; `bgBlur`
-survives the save and draws solid black instead of a blurred fill; an `sfx` track
-survives too and is silent, because the sound is a store asset with no local file.
+**Four are refused**, each one written correctly, exiting 0 and linting clean
+before doing nothing: `bgBlur` survives the save and draws solid black instead of
+a blurred fill; `opacity` composites fully opaque; a `sticker` track names an id
+with no local asset; and an `sfx` track survives and is silent, for the same
+store-asset reason. `mix` and `cover` were on this list until the app was asked
+what it actually reads — both work now, and both were checked in the app rather
+than in the file: the Blend panel names all nine modes back, and the cover image
+shows in the project list.
 `bubble` and a `sticker` track are refused for the same store reason — a
 sticker's material carries no file at all, only the token
 `##_material_placeholder_<uuid>_##`, and the app badges both segments as

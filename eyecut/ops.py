@@ -91,6 +91,14 @@ MIX_MODES = ("normal", "multiply", "screen", "overlay", "soft-light",
              "hard-light", "color-dodge", "color-burn", "darken", "lighten",
              "difference", "exclusion")
 
+#: Two of those the CLI accepts and CapCut ships no shader for -- there is no
+#: `difference` or `exclusion` in the app's own `MixMode.json`, so the material
+#: would name a resource that does not exist. Written out here rather than left
+#: out of `MIX_MODES`, because the CLI does take them: the distinction is the
+#: point. (The bundle also holds one shader the CLI has no slug for, Linear
+#: burn, which is why the two lists are not each other's complement.)
+MIX_MODES_UNSHIPPED = ("difference", "exclusion")
+
 # `capcut crop --ratio`. Also closed: the CLI computes a centred maximal crop of
 # that aspect and refuses anything else.
 CROP_RATIOS = ("free", "1:1", "16:9", "9:16", "4:3", "3:4")
@@ -251,6 +259,13 @@ def _check_mix(mix: Any, track_type: str, where: str) -> None:
     if mode not in MIX_MODES:
         raise SpecError(f"{where}: unknown blend mode {mode!r}. "
                         f"One of: {', '.join(MIX_MODES)}")
+    if mode in MIX_MODES_UNSHIPPED:
+        raise SpecError(
+            f"{where}: `capcut mix-mode` takes {mode!r} and CapCut ships no "
+            f"shader for it — it is not in the app's own MixMode.json, so the "
+            f"material would name a resource that is not there. The nine that "
+            f"do exist: "
+            f"{', '.join(m for m in MIX_MODES if m not in MIX_MODES_UNSHIPPED)}.")
 
 
 def _check_chroma(chroma: Any, track_type: str, where: str) -> None:
@@ -353,7 +368,7 @@ ITEM_OPS = (
            command=lambda t: "text-anim" if t == "text" else "image-anim",
            options=ANIM_OPTIONS, validate=_check_anim),
     ItemOp(key="mix", command="mix-mode", tracks=("video",), single="mode",
-           positional="mode", validate=_check_mix),
+           positional="mode", validate=_check_mix, after="repair_mix_modes"),
     ItemOp(key="chroma", command="chroma", tracks=("video",), single="color",
            options={"color": "--color", "intensity": "--intensity"},
            validate=_check_chroma, after="repair_chroma_materials"),

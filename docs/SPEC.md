@@ -86,9 +86,15 @@ is that compile's vocabulary is the vocabulary, warts and all.
 
 **Verified working** **[proven]**: video / audio / text tracks · per-item `speed`,
 `volume`, `scale`, `x`/`y`, `fontSize`, `color`, `sourceStart` · `transition` ·
-`filter` · `effect` · `keyframe` on 11 properties · `audio-fade` · masks (nine
-shapes) · **overlay / picture-in-picture** via a second *named* video track ·
-**captions** from an SRT (one text segment per cue, `sub_type: 1`).
+`filter` · `effect` · `keyframe` on 11 properties · `audio-fade` ·
+**overlay / picture-in-picture** via a second *named* video track ·
+**captions** from an SRT (one text segment per cue, `sub_type: 1`) · **blend
+modes** (all nine shipped shaders named back by the app's Blend panel, and
+surviving the save) · **`cover`** (the image appears in the project list without
+the draft ever being opened).
+
+Masks are **no longer in this list**: nine shapes reach the file and the Mask
+panel shows them, but nothing masks the picture. See below.
 
 **Seen in the app** **[proven]**: `crop` (both a ratio and an explicit rect —
 the 9:16 slice and the middle-quarter zoom both render), `rotation`,
@@ -96,16 +102,19 @@ the 9:16 slice and the middle-quarter zoom both render), `rotation`,
 and **two video tracks compositing simultaneously**, the overlay layered over the
 base rather than appended after it. Also confirmed in the app: a mask on the base
 of a two-video-track spec lands on the base, with the overlay untouched — the
-`(type, track, item)` matcher fix, checked where the files had lied before.
+`(type, track, item)` matcher fix, checked where the files had lied before. What
+that confirms is *placement*, which is all it ever claimed; the mask still does
+not draw.
 
 Nothing is left in the **[untested]** column: every key and track type
 capcut-cli 0.21.1 can reach has now been seen in the app, or measured out of one.
 
-**Six are refused by `validate_spec`** rather than merely documented, because
+**Four are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
-would ever tell the user: `mix`, `cover`, `bgBlur`, `opacity`, and `sticker` and
-`sfx` tracks. `chroma` was the seventh until the reference draft below was built
-by hand; it works now.
+would ever tell the user: `bgBlur`, `opacity`, and `sticker` and `sfx` tracks.
+There were seven. `chroma` and `mix` fell to the `check_flag` discovery below and
+`cover` to reading what CapCut's project list actually opens — all three by the
+same method, which is to make the reference by hand and diff it.
 `bubble` is refused for a different reason — the store boundary below. Every one
 is a **[proven failure]** with the evidence recorded further down.
 
@@ -238,35 +247,47 @@ built, so that was not a corner case.
   ```
 
 - **A blend mode is written where CapCut does not keep it** **[proven failure,
-  reproduced on two independent drafts]**. `mix` is refused by `validate_spec` —
-  `DISCARDED_BY_APP` in `eyecut/spec.py`. `capcut mix-mode` writes
-  `mix_mode: "Screen"` as a string field onto the video *material*, the way speed
-  is written. It is present and correct in the draft eyecut hands over, in the
-  root file and the timeline mirror, and `capcut lint` reports it clean. Open the
-  draft in CapCut once and save, and `mix_mode` is gone from every material.
-
-  **Where it actually lives is now known**, from the reference draft described
-  under `check_flag` below. CapCut keeps a blend mode as its own material in
-  `materials.effects`, referenced from the segment's `extra_material_refs`:
+  now repaired]**. `capcut mix-mode` writes `mix_mode: "Screen"` as a string
+  field onto the video *material*, the way speed is written. It lints clean, and
+  CapCut strips it from every material on the first save — because it was never
+  a field the app reads. A blend mode is its own material in `materials.effects`,
+  referenced from the segment:
 
   ```json
   {"type": "mix_mode", "name": "Screen", "effect_id": "871339",
    "resource_id": "6758325170760323597", "value": 1.0, "visible": true,
-   "path": "/Applications/CapCut.app/Contents/MacOS/../Resources/MixMode/d9c1d4ca7ab9…"}
+   "path": ".../Resources/MixMode/d9c1d4ca7ab9…"}
   ```
 
-  So the string field was never a field CapCut reads, which is why it is stripped
-  rather than honoured — and the CLI adds no `extra_material_refs` entry at all,
-  leaving the segment pointing at no blend mode whatever. The `path` is inside the
-  app bundle, so this is **not** the store boundary that kills `sticker` and
-  `sfx`: every mode ships with the app and is writable.
+  `repair_mix_modes` reads the CLI's string field, builds that material,
+  references it, sets `check_flag` bit 8 and deletes the string.
 
-  **This is a wrong-place problem, not a dead end**, and the fix is the same shape
-  as `repair_chroma_materials`: build the material, reference it, and set
-  `check_flag` bit 8. What it needs first is a catalogue — each of the 12 modes
-  carries its own `effect_id` / `resource_id` / bundle-path triple, and only
-  Screen's is known. One hand-built draft of 12 clips, one mode each, harvested
-  once, the way the sticker id and the mask `constant_material_id` were.
+  **The catalogue did not have to be harvested.** CapCut ships
+  `Resources/MixMode/MixMode.json`, a manifest of all ten shaders with their
+  `effectId`, `resourceId` and file — so unlike the sticker id, which had to be
+  captured from a draft made by hand, the identities are simply there to read.
+  Look for a manifest before building a harvesting ritual.
+
+  Two consequences of ten shaders against the CLI's twelve slugs. **`difference`
+  and `exclusion` are refused**: `capcut mix-mode` accepts them and CapCut ships
+  no shader, so the material would name a resource that is not there — the
+  failure `sticker` dies of, caught before the draft exists. And the bundle holds
+  one shader the CLI has no slug for, Linear burn, which is out of reach for the
+  same reason everything else upstream is.
+
+  **The whole mapping is now confirmed in the app** [proven]. It was inferred
+  except for Screen (`effect_id: 871339`, internal name `color_filter`), with the
+  rest read across from the Chinese originals — `glare_pc` 强光 Hard Light,
+  `darken_color` 颜色加深 Color Burn, `dark_en`/`bright_en` 变暗/变亮
+  Darken/Lighten. `verify_coverage.py --only mix` builds one clip per mode, and
+  CapCut's own Blend panel named all nine back in order: Multiply, Screen,
+  Overlay, Soft light, Hard light, Color dodge, Color burn, Darken, Brighten.
+  Note the last one: the `lighten` slug is right, but the app labels that mode
+  **Brighten**, so the checklist asks for the name CapCut prints, not the slug.
+
+  Verified past the save as well, which is where the string field died: opened,
+  saved and re-read, the draft still carries all nine materials, every
+  `extra_material_refs` entry, and `check_flag` 15 on every overlay segment.
 
 - **A chroma key is written under names CapCut does not read, and gated behind a
   flag nothing sets** **[proven failure, now repaired]**. `capcut chroma` gets the
@@ -293,28 +314,35 @@ built, so that was not a corner case.
   own, field for field" was true, and the feature was still dead. The evidence
   that settles a question is the app.
 
-- **`cover` sets a key the project list does not read** **[proven failure]**.
-  Refused by `validate_spec`; `DISCARDED_COVER` in `eyecut/spec.py` carries the
-  reason, and the shape it used to check was `{path, time}` for when the key
-  becomes worth writing again.
-  `capcut add-cover` exits 0 and writes `draft_info.cover` with the image path
-  and `time_ms`, so nothing in the build reports a problem. But it produces no
-  `draft_cover.jpg` in the draft folder and leaves `draft_meta_info.draft_cover`
-  at the template's default name, pointing at a file that does not exist —
-  **the thumbnail in CapCut's project list stays black, identical to a draft
-  that asked for no cover at all.**
+- **`cover` sets a key the project list does not read** **[proven failure, now
+  repaired]**. `capcut add-cover` exits 0 and writes `draft_info.cover` with the
+  image path and `time_ms`, so nothing in the build reports a problem. But it
+  produces no `draft_cover.jpg` in the draft folder, so the requested cover
+  never appears.
 
-  Two further reasons not to lean on it even if the app is later taught to read
-  the key: the path written is wherever the caller's image happened to live
-  (`verify_coverage.py` leaves it pointing into the repo's `scratch/`), so the
-  reference breaks the moment that file is cleaned up; and nothing copies the
-  image into the draft, so the draft is not self-contained.
+  The fix was in the sentence that used to describe the problem: the meta leaves
+  `draft_meta_info.draft_cover` "at the template's default name, pointing at a
+  file that does not exist". That default name is `draft_cover.jpg`, and it is
+  what CapCut's project list opens — confirmed against 28 CapCut-authored drafts,
+  every one of them a 1920x1080 JPEG at that exact name. So the meta was never
+  wrong and the CLI was never needed: `apply_cover` renders the caller's image to
+  `draft_cover.jpg` with ffmpeg, letterboxed to 1920x1080, and the CLI is out of
+  the path entirely. `time` is accepted and ignored — it addressed a frame for
+  the key nothing reads.
 
-  The whole value of `cover` was setting a thumbnail *without* opening the
-  project. It does not do that, and once the project is opened CapCut generates
-  its own thumbnail anyway — which is the state every eyecut draft is already in.
+  This also makes the draft self-contained, which the old route was not: the
+  image is rendered *into* the draft rather than referenced wherever the caller's
+  file happened to live. And it delivers what `cover` was for in the first place
+  — a thumbnail without opening the project: **confirmed in the project list**
+  [proven], where a draft built with `cover` shows the image and a control built
+  without it, side by side, does not.
 
-  Found only because the drafts were opened and the files re-read afterwards.
+  One correction to what this entry used to claim. Without a cover the thumbnail
+  does **not** stay black — CapCut synthesises one from the timeline's first
+  frame, for a draft it has never opened. The old "identical to a draft that
+  asked for no cover at all" reading came from a cover image that was itself
+  near-black, which is a test asset proving nothing. So `cover` does not fill a
+  blank; it *replaces* the frame CapCut would have picked.
 
 - **`opacity` composites opaque** **[proven failure]**. The one that needed an
   export to catch, and the strongest argument for the rule below it. `clip.alpha`
@@ -394,7 +422,31 @@ built, so that was not a corner case.
   references nothing. Found by asking the user to apply a circle mask by hand and
   diffing the two entries — the same method that produced the `register_media`
   fixture, and the only method that works for this class of question
-  **[proven, confirmed in the app]**.
+  **[proven, confirmed in the app]**. Re-diffed since against a second hand-made
+  mask: still the only field that differs, and stamping it is still not enough to
+  make a mask draw (see the mask entry under proven failures).
+- **A mask reaches the segment, shows in the panel, and masks nothing**
+  **[proven failure, cause not yet found]**. Found by opening the drafts instead
+  of the files, which is the only way it could have been. In a mask-only draft
+  and in a four-key draft alike, the masked clip renders **full-frame** at a
+  playhead inside it — no cut, no canvas showing through — while Video > Mask
+  reads `Mask1 Circle`, ticked, with the size the spec asked for. Save, quit,
+  reopen: unchanged.
+
+  **The control is what makes this worth writing down.** A Circle mask applied
+  **by hand in the app**, on a neighbouring clip of the same draft, does not draw
+  either. And saved out, the two entries are the same shape — same
+  `resource_id` (`7374021188315517456`), same bundle `path`, same key set, both
+  carrying a `constant_material_id`, differing only in `config.width` (0.28 for
+  eyecut's `size: 0.5`, 0.21 for the app's default). So this is **not** eyecut
+  writing a mask CapCut won't read, and it is not the `check_flag` story either:
+  it is the preview declining to draw masks at all.
+
+  Which means the earlier "masks work" reading was the panel, again — the same
+  mistake the note at the end of this document already records twice, made a
+  third time on the same feature. The remaining test is the one `opacity` needed:
+  **export and measure**. Until that runs, masks are unproven at the render
+  level, and no edit should lean on one.
 - **`tm_duration`**, which compile leaves at 0, listing the draft as 00:00.
 
 ### `check_flag`, and why a perfect material can do nothing

@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eyecut.draft import write_draft  # noqa: E402
+from eyecut.ops import MIX_MODES, MIX_MODES_UNSHIPPED  # noqa: E402
 from eyecut.timeline import DRAFT_STORE  # noqa: E402
 
 
@@ -39,6 +40,10 @@ from eyecut.timeline import DRAFT_STORE  # noqa: E402
 #: two-minute shots. The in-points still spread across the whole source, so each
 #: clip is visibly different footage.
 SHOT = 3.0
+
+#: What CapCut's Blend panel prints, where it differs from the CLI slug. Only
+#: `lighten` does: the app calls that mode Brighten [proven, read off the panel].
+BLEND_PANEL_NAMES = {"lighten": "Brighten"}
 
 
 
@@ -137,6 +142,36 @@ def chroma(source: Path, span: float) -> tuple[dict, list[str]]:
     ]
 
 
+def mix(source: Path, span: float) -> tuple[dict, list[str]]:
+    """Every blend mode CapCut ships a shader for, one clip each.
+
+    The slugs map onto the app's internal `nameId`s. CapCut names the selected
+    mode in its own Blend panel, so checking each clip validates the whole table
+    at once -- and all nine named themselves back correctly [proven], which is
+    what promoted the inferred half of the mapping (`glare_pc` Hard Light,
+    `darken_color` Color Burn, `dark_en`/`bright_en` Darken/Lighten) to measured.
+
+    `lighten` is the one slug whose label differs: the app calls that mode
+    **Brighten**, so that is what the checklist below asks for.
+    """
+    modes = [m for m in MIX_MODES if m not in MIX_MODES_UNSHIPPED and m != "normal"]
+    shot = 2.0
+    spec = {"name": "eyecut-verify-mix", "tracks": [
+        {"type": "video", "name": "base", "items": [
+            {"path": str(source), "start": i * shot, "duration": shot,
+             "sourceStart": span / 3} for i in range(len(modes))]},
+        {"type": "video", "name": "overlay", "items": [
+            {"path": str(source), "start": i * shot, "duration": shot,
+             "sourceStart": span / 5, "scale": 0.6, "mix": mode}
+            for i, mode in enumerate(modes)]}]}
+    return spec, [
+        "every clip composites -- a mode that does nothing is one whose shader "
+        "id is wrong",
+        *(f"at {i * shot:.0f}s, Video > Basic > Blend reads Mode: "
+          f"{mode.replace('-', ' ').title()}" for i, mode in enumerate(modes)),
+    ]
+
+
 def regression(source: Path, span: float) -> tuple[dict, list[str]]:
     """The bug this work started from: a mask on the base of a two-track spec.
 
@@ -169,7 +204,7 @@ def main() -> int:
                              "beside the old one (nothing is ever deleted)")
     parser.add_argument("--only", action="append", default=None,
                         help="build one draft by name (compositing/text/"
-                             "chroma/regression); repeatable")
+                             "chroma/mix/regression); repeatable")
     args = parser.parse_args()
 
     source = args.footage.resolve()
@@ -183,6 +218,7 @@ def main() -> int:
     builders = {"compositing": lambda: compositing(source, span),
                 "text": lambda: text(source, span),
                 "chroma": lambda: chroma(source, span),
+                "mix": lambda: mix(source, span),
                 "regression": lambda: regression(source, span)}
     wanted = args.only or list(builders)
 

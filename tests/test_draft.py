@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from eyecut.draft import (CHROMA_PATH, CompileError, repair_chroma_materials,
+from eyecut.draft import (AFTER_HOOKS, CHECK_FLAG_BLEND, CHECK_FLAG_CHROMA, CHROMA_PATH,
+                          CompileError, MIX_MODE_NAME_IDS, _mix_mode_catalogue,
+                          repair_chroma_materials, repair_mix_modes,
                           repair_sfx_materials, write_draft)
 from eyecut.media import MediaProbe
 
@@ -825,3 +827,118 @@ def test_a_draft_with_no_chroma_is_untouched():
 
         assert repair_chroma_materials(project) == 0
         assert (project / "draft_info.json").read_text() == before
+
+
+# --- blend modes -------------------------------------------------------------
+#
+# `capcut mix-mode` writes a string field CapCut has no reader for. These check
+# the move to where the app does read it, against the shape captured from a blend
+# mode set by hand.
+
+
+def _blend_draft(display="Screen"):
+    return {"tracks": [{"type": "video", "name": "overlay", "segments": [
+                {"id": "s0", "material_id": "vm", "extra_material_refs": ["speed"]}]}],
+            "materials": {"videos": [{"id": "vm", "check_flag": 7,
+                                      "mix_mode": display}]}}
+
+
+def test_a_blend_mode_moves_to_the_material_capcut_reads():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "draft_info.json").write_text(json.dumps(_blend_draft()))
+
+        assert repair_mix_modes(project) == 1
+
+        out = json.loads((project / "draft_info.json").read_text())
+        video = out["materials"]["videos"][0]
+        assert "mix_mode" not in video, "the string field is what CapCut strips"
+        assert video["check_flag"] == 7 | CHECK_FLAG_BLEND, "or the app ignores it"
+
+        effects = out["materials"]["effects"]
+        assert len(effects) == 1
+        material = effects[0]
+        assert material["type"] == "mix_mode"
+        assert material["name"] == "Screen"
+        # the identity CapCut resolves the shader by, from its own manifest
+        assert material["effect_id"] == "871339"
+        assert material["resource_id"] == "6758325170760323597"
+        assert material["path"].endswith("d9c1d4ca7ab91df4f48d12b339f2da88")
+        assert material["value"] == 1.0 and material["visible"] is True
+
+        segment = out["tracks"][0]["segments"][0]
+        assert material["id"] in segment["extra_material_refs"], \
+            "a material nothing references is a material CapCut never reads"
+
+
+def test_normal_writes_no_material_because_it_is_the_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "draft_info.json").write_text(json.dumps(_blend_draft("Normal")))
+
+        assert repair_mix_modes(project) == 1
+
+        out = json.loads((project / "draft_info.json").read_text())
+        assert out["materials"].get("effects", []) == []
+        assert "mix_mode" not in out["materials"]["videos"][0]
+
+
+def test_a_draft_with_no_blend_mode_is_untouched():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        before = json.dumps({"tracks": [], "materials": {"videos": [{"id": "v"}]}})
+        (project / "draft_info.json").write_text(before)
+
+        assert repair_mix_modes(project) == 0
+        assert (project / "draft_info.json").read_text() == before
+
+
+def test_every_slug_names_a_shader_this_install_actually_has():
+    """The mapping is only as good as the bundle it points into. If CapCut ever
+    renames one, this is the test that says so rather than a silent no-op."""
+    catalogue = _mix_mode_catalogue()
+    if not catalogue:
+        pytest.skip("no CapCut bundle on this machine")
+    missing = sorted(n for n in MIX_MODE_NAME_IDS.values() if n not in catalogue)
+    assert not missing, f"MixMode.json has no {missing}"
+
+
+def test_after_hooks_run_once_all_the_cli_calls_are_done():
+    """A spec carrying two decorated keys used to lose the first one's repair.
+
+    Every `capcut` command rewrites draft_info.json from what it recognises, so a
+    material an after-hook adds is dropped by the *next* op's call. It only shows
+    when one spec carries two: a mask beside a blend mode lost the blend mode,
+    its `check_flag` and the repaired chroma with it, and every single-key draft
+    built to check the repairs passed [proven]. So the hooks run after the loop,
+    not inside it.
+    """
+    timeline = []          # CLI calls and hook runs, in the order they happen
+    original = dict(AFTER_HOOKS)
+    try:
+        for name in original:
+            AFTER_HOOKS[name] = lambda _p, n=name: timeline.append(("hook", n))
+        spec = {"tracks": [{"type": "video", "items": [
+            {"path": "/a.mp4", "start": 0, "duration": 2, "mix": "screen",
+             "mask": {"slug": "circle"}, "chroma": {"color": "#00ff00"}}]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "draft_info.json").write_text(json.dumps(
+                {"tracks": [{"type": "video", "segments": [
+                    {"id": "s0", "material_id": "vm", "extra_material_refs": []}]}],
+                 "materials": {"videos": [{"id": "vm"}]}}))
+            from eyecut.draft import apply_item_ops
+            apply_item_ops(spec, project,
+                           runner=lambda argv, cwd: (timeline.append(("cli", argv[1]))
+                                                     or (0, "")),
+                           store=project)
+    finally:
+        AFTER_HOOKS.clear()
+        AFTER_HOOKS.update(original)
+
+    kinds = [kind for kind, _ in timeline]
+    assert "hook" in kinds, "the hooks have to run at all"
+    assert kinds.index("hook") == len(kinds) - kinds.count("hook"), \
+        f"every CLI call must come before the first hook, got {timeline}"
+    hooks = [name for kind, name in timeline if kind == "hook"]
+    assert len(set(hooks)) == len(hooks), "a hook re-run is wasted work at best"
