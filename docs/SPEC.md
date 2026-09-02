@@ -251,8 +251,22 @@ built, so that was not a corner case.
   Found only because the drafts were opened and the files re-read afterwards. The
   test suite is green on both keys — it asserts against the file eyecut wrote,
   which is exactly the evidence SPEC.md says is necessary and not sufficient.
-  **Not yet reported upstream**, and it is not obviously capcut-cli's bug: it may
-  be writing a shape CapCut 9.x no longer reads.
+
+  **This is a wrong-shape problem, not a proven dead end.** The entry CapCut
+  writes back carries `spill_value`, `edge_smooth_value` and `version` — fields
+  capcut-cli never wrote, so CapCut *read* the entry, kept the colour and rebuilt
+  the rest in its own struct. It lost the strength because capcut-cli writes
+  `intensity` where CapCut reads **`intensity_value`**. If that is the whole
+  story, both keys are repairable the way `constant_material_id` on masks
+  already is: stamp the native shape after the compile.
+
+  What settles it is the method that produced the `register_media` fixture and
+  the mask `constant_material_id` — **apply a blend mode and a chroma key by hand
+  in CapCut, save, and diff the two entries.** No draft on this machine has ever
+  used either (59 scanned, zero hits), which is why nothing caught it earlier and
+  why the reference has to be made rather than found. Until that diff exists,
+  where CapCut 9.x keeps a blend mode is simply unknown: it is not on the video
+  material, and it is nowhere else in the saved file.
 
 - **`bgBlur` is a level, not the fraction it stands for.** 1–4 map to 0.0625 /
   0.375 / 0.75 / 1.0. Passing `0.75` is the natural guess and gets a
