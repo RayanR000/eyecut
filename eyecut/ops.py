@@ -356,7 +356,7 @@ ITEM_OPS = (
            positional="mode", validate=_check_mix),
     ItemOp(key="chroma", command="chroma", tracks=("video",), single="color",
            options={"color": "--color", "intensity": "--intensity"},
-           validate=_check_chroma),
+           validate=_check_chroma, after="repair_chroma_materials"),
     ItemOp(key="bgBlur", command="bg-blur", tracks=("video",), single="level",
            positional="level", validate=_check_bg_blur),
     ItemOp(key="crop", command="crop", tracks=("video",), single="ratio",

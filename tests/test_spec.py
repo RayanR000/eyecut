@@ -466,11 +466,17 @@ def test_an_unknown_track_type_is_named_with_the_ones_that_exist():
 
 # --- keys the app throws away -------------------------------------------------
 #
-# These three reach the draft, exit 0, and lint clean. `mix` and `chroma` are
-# then discarded the first time CapCut opens and saves the project; `cover`
-# writes a key the project list never reads, so the thumbnail stays black. A
-# build that accepts them reports success for work the user will not get, which
-# is the one thing spec validation exists to prevent.
+# These reach the draft, exit 0, and lint clean. `mix` is then discarded the
+# first time CapCut opens and saves the project; `cover` writes a key the project
+# list never reads, so the thumbnail stays black. A build that accepts them
+# reports success for work the user will not get, which is the one thing spec
+# validation exists to prevent.
+#
+# `chroma` sat here too, until the material CapCut writes for its own was
+# captured by hand and compared: the CLI's version was the right material in the
+# right place under the wrong field names, and `repair_chroma_materials` now
+# rewrites it. Refusal is for what cannot be reached, not for what is merely
+# broken on the way.
 
 
 def test_mix_is_refused_because_capcut_discards_it():
@@ -480,11 +486,13 @@ def test_mix_is_refused_because_capcut_discards_it():
              "mix": "screen"}]}))
 
 
-def test_chroma_is_refused_because_capcut_discards_it():
-    with pytest.raises(SpecError, match="chroma"):
-        validate_spec(spec({"type": "video", "items": [
-            {"path": "/footage/a.mp4", "start": 0, "duration": 4,
-             "chroma": {"color": "#00FF00", "intensity": 0.6}}]}))
+def test_chroma_is_accepted_now_that_the_material_is_repaired():
+    """It was refused while the app discarded it. `repair_chroma_materials`
+    rewrites what the CLI writes into CapCut's own shape, verified field for
+    field against a chroma key applied by hand in the app."""
+    validate_spec(spec({"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+         "chroma": {"color": "#00FF00", "intensity": 0.6}}]}))
 
 
 def test_cover_is_refused_because_the_project_list_ignores_it():

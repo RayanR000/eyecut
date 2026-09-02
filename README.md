@@ -112,7 +112,11 @@ standalone command that works), **speed** (compile writes `segment.speed` but
 leaves the speed material at 1, and the app reads the material) and **masks**
 (compile has no mask operation at all — nine shapes, applied with `capcut mask`
 and matched to the segment by position, then stamped with the
-`constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty).
+`constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty)
+and **chroma** (`capcut chroma` puts the right material in the right place under
+field names CapCut never reads — `intensity` for `intensity_value` and five more
+— and the app only honours it once `check_flag` on the video material has bit 32
+set, which nothing else writes).
 
 And, as of 2026-09-02, everything else capcut-cli 0.21.1 can reach — with the
 caveat that reaching the draft and reaching the screen turned out to be different
@@ -120,9 +124,8 @@ things. Confirmed in the app: `crop` (a ratio or a 0–1 rect), `rotation`,
 `textRanges` (multi-colour text), and a second video track compositing over the
 first.
 
-**Seven are refused**, each one written correctly, exiting 0 and linting clean
-before doing nothing: `mix` (12 blend modes) and `chroma` are discarded the first
-time CapCut saves; `cover` writes a key the project list never reads; `bgBlur`
+**Six are refused**, each one written correctly, exiting 0 and linting clean
+before doing nothing: `mix` (12 blend modes) is discarded the first time CapCut saves; `cover` writes a key the project list never reads; `bgBlur`
 survives the save and draws solid black instead of a blurred fill; an `sfx` track
 survives too and is silent, because the sound is a store asset with no local file.
 `bubble` and a `sticker` track are refused for the same store reason — a

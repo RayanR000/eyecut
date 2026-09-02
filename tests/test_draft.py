@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from eyecut.draft import CompileError, repair_sfx_materials, write_draft
+from eyecut.draft import (CHROMA_PATH, CompileError, repair_chroma_materials,
+                          repair_sfx_materials, write_draft)
 from eyecut.media import MediaProbe
 
 
@@ -764,3 +765,63 @@ def test_a_normal_audio_segment_is_left_alone():
 # a test cannot obtain. `repair_sfx_materials` keeps its unit tests -- the repair
 # is still what stops CapCut deleting the track outright, and is the half of the
 # problem that was solvable from the files.
+
+
+# --- chroma ------------------------------------------------------------------
+#
+# The shape on the right of each assertion is CapCut's own, captured by applying
+# a chroma key by hand in the app and reading the material back out. `capcut
+# chroma` creates the material and references it from the right segment, and
+# then names every field something CapCut does not read.
+
+
+def test_the_chroma_material_is_rewritten_into_the_shape_capcut_reads():
+    """Six wrong fields and four missing ones, all of them silent: the CLI exits
+    0 and lints clean, and the app renders no key at all [proven]."""
+    data = {"tracks": [], "materials": {"chromas": [
+        {"id": "c0", "type": "chromas", "color": "#0d1618",
+         "intensity": 0.2, "shadow": 0, "path": ""}]}}
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "draft_info.json").write_text(json.dumps(data))
+
+        assert repair_chroma_materials(project) == 1
+
+        out = json.loads((project / "draft_info.json").read_text())
+        chroma = out["materials"]["chromas"][0]
+        assert chroma["type"] == "chroma", "the CLI writes the list name, not the type"
+        assert chroma["intensity_value"] == 0.2, "CapCut never reads `intensity`"
+        assert chroma["shadow_value"] == 0.0
+        assert "intensity" not in chroma and "shadow" not in chroma
+        assert chroma["color"] == "#0d1618ff", "CapCut stores the key colour RGBA"
+        assert chroma["path"] == CHROMA_PATH, "the shader ships inside the app bundle"
+        assert chroma["version"] == "v2"
+        assert chroma["should_transfer_color"] is True
+        assert chroma["edge_smooth_value"] == 0.0 and chroma["spill_value"] == 0.0
+
+
+def test_a_chroma_already_in_capcuts_shape_is_left_alone():
+    """The repair has to be safe to re-run over a draft CapCut has saved once,
+    the way every other rebuild step is."""
+    data = {"tracks": [], "materials": {"chromas": [
+        {"id": "c0", "type": "chroma", "color": "#0d1618ff", "intensity_value": 0.2,
+         "shadow_value": 0.0, "path": CHROMA_PATH, "resource_id": "",
+         "should_transfer_color": True, "edge_smooth_value": 0.0,
+         "spill_value": 0.0, "version": "v2"}]}}
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        before = json.dumps(data)
+        (project / "draft_info.json").write_text(before)
+
+        assert repair_chroma_materials(project) == 0
+        assert (project / "draft_info.json").read_text() == before
+
+
+def test_a_draft_with_no_chroma_is_untouched():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        before = json.dumps({"tracks": [], "materials": {"videos": [{"id": "v"}]}})
+        (project / "draft_info.json").write_text(before)
+
+        assert repair_chroma_materials(project) == 0
+        assert (project / "draft_info.json").read_text() == before

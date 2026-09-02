@@ -442,6 +442,111 @@ def stamp_mask_ids(project_dir: Path) -> int:
 AFTER_HOOKS["stamp_mask_ids"] = stamp_mask_ids
 
 
+#: Where CapCut keeps the chroma shader. Fixed inside the app bundle, so a chroma
+#: key is not a store asset the way a sticker is -- it is here on every install.
+CHROMA_PATH = "/Applications/CapCut.app/Contents/Resources/Chroma2"
+
+#: `capcut chroma` writes each of these under the wrong name, and CapCut reads
+#: nothing: field on the left as the CLI writes it, CapCut's own on the right.
+#: Captured by diffing a chroma key applied by hand in the app against the same
+#: one applied by `capcut chroma` on a copy of the identical draft.
+CHROMA_RENAMES = {"intensity": "intensity_value", "shadow": "shadow_value"}
+
+#: The rest of CapCut's own shape, which the CLI omits entirely.
+CHROMA_DEFAULTS = {"should_transfer_color": True, "edge_smooth_value": 0.0,
+                   "spill_value": 0.0, "version": "v2", "resource_id": ""}
+
+#: `check_flag` on a VIDEO MATERIAL is a bitmask of which effects CapCut will
+#: honour on the segments using it. Everything eyecut and compile write leaves it
+#: at 7, and the app then ignores an otherwise perfect material -- which is why a
+#: chroma key written field-for-field like CapCut's own still did nothing.
+#: Read off three segments of one hand-edited draft: plain 7, blend mode 15
+#: (7|8), chroma 39 (7|32) [proven].
+CHECK_FLAG_BLEND = 8
+CHECK_FLAG_CHROMA = 32
+
+
+def _set_check_flag(data: dict, material_ids: set[str], bit: int) -> int:
+    """Turn on `bit` in `check_flag` for the named video materials.
+
+    Note the flag lives on the *material*, not the segment, so two segments
+    sharing one video material share the flag. compile writes one material per
+    segment, so that does not arise on a freshly built draft -- but a draft
+    CapCut has re-saved can collapse them, which is what `collapse_videos` in
+    `eyecut.timeline` exists for.
+    """
+    changed = 0
+    for material in data.get("materials", {}).get("videos", []):
+        if material.get("id") in material_ids:
+            flag = material.get("check_flag", 0)
+            if not flag & bit:
+                material["check_flag"] = flag | bit
+                changed += 1
+    return changed
+
+
+def _segments_using(data: dict, material_type: str) -> set[str]:
+    """Video-material ids of every segment referencing a material of this type."""
+    by_id = {m["id"]: m for lst in data.get("materials", {}).values()
+             if isinstance(lst, list)
+             for m in lst if isinstance(m, dict) and "id" in m}
+    used = set()
+    for track in data.get("tracks", []):
+        if track.get("type") != "video":
+            continue
+        for segment in track.get("segments", []):
+            types = {by_id.get(ref, {}).get("type")
+                     for ref in segment.get("extra_material_refs", [])}
+            if material_type in types:
+                used.add(segment.get("material_id"))
+    return used
+
+
+def repair_chroma_materials(project_dir: Path) -> int:
+    """Rewrite `capcut chroma`'s material into the shape CapCut reads.
+
+    The CLI gets the hard part right -- the material is created and the segment
+    references it -- and every field wrong. `type` is `chromas` where CapCut
+    writes `chroma`; the strength is `intensity`/`shadow` where CapCut reads
+    `intensity_value`/`shadow_value`; `color` is missing the alpha suffix CapCut
+    appends; `path` is empty where CapCut points at its own shader; and four
+    more fields are absent. The app therefore reads a material it does not
+    recognise, which is the whole of why a correctly-written chroma key came to
+    nothing [proven].
+
+    Same class as `stamp_mask_ids` and the speed resync: the CLI reached the
+    draft, and what it wrote is not what the app reads. Returns the number of
+    materials repaired, and writes nothing if none.
+    """
+    draft_info = project_dir / "draft_info.json"
+    data = json.loads(draft_info.read_text())
+    repaired = 0
+    for chroma in data.get("materials", {}).get("chromas", []):
+        if chroma.get("type") == "chroma":
+            continue                      # already CapCut's own shape
+        chroma["type"] = "chroma"
+        for cli_name, capcut_name in CHROMA_RENAMES.items():
+            if cli_name in chroma:
+                chroma[capcut_name] = float(chroma.pop(cli_name))
+        colour = chroma.get("color") or ""
+        # CapCut stores the key colour RGBA; the CLI takes and writes #RRGGBB
+        if len(colour) == 7:
+            chroma["color"] = colour + "ff"
+        chroma["path"] = CHROMA_PATH
+        for key, value in CHROMA_DEFAULTS.items():
+            chroma.setdefault(key, value)
+        repaired += 1
+    # and the flag that lets the app read any of it
+    repaired += _set_check_flag(data, _segments_using(data, "chroma"),
+                                CHECK_FLAG_CHROMA)
+    if repaired:
+        draft_info.write_text(json.dumps(data, ensure_ascii=False))
+    return repaired
+
+
+AFTER_HOOKS["repair_chroma_materials"] = repair_chroma_materials
+
+
 #: The four companion materials every audio segment carries. CapCut authors them
 #: for its own, `capcut compile` writes them for an audio track, and `add-sfx`
 #: writes none -- so a repaired segment needs them built here. Field-for-field

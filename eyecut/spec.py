@@ -81,12 +81,12 @@ DISCARDED_BY_APP = {
                "(161,61,60), a 0.4 composite could not put red below 97, and "
                "the export read 70 [proven]. A by-hand opacity edit in the app "
                "produces a byte-identical segment, so there is no key eyecut is "
-               "failing to write. Cut between the shots instead of dissolving "
-               "one over the other, or composite outside CapCut.",
-    "chroma": "CapCut discards the chroma key, rewriting the entry into its own "
-              "struct with the effect off (`{type: 'none', intensity_value: "
-              "0.0}`) and keeping only the colour [proven]. Key the shot outside "
-              "CapCut, or apply it by hand in the app.",
+               "failing to write. Nor is it the `check_flag` gate that turned "
+               "out to be hiding `chroma`: with bit 8 set the app parses the "
+               "blend group and resets Opacity to 100%, which is a cleaner "
+               "refusal than the reduced-but-unrendered value it showed before "
+               "[proven]. Cut between the shots instead of dissolving one over "
+               "the other, or composite outside CapCut.",
 }
 
 #: Track types in the same class as `DISCARDED_BY_APP`, mapped to why.

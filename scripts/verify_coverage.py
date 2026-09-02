@@ -107,6 +107,36 @@ def text(source: Path, span: float) -> tuple[dict, list[str]]:
     ]
 
 
+def chroma(source: Path, span: float) -> tuple[dict, list[str]]:
+    """The first refusal to be reversed, so it needs the app more than the rest.
+
+    `capcut chroma` puts the right material in the right place under field names
+    CapCut does not read; `repair_chroma_materials` rewrites it into the shape
+    captured from a key applied by hand in the app. The two overlay clips are the
+    same shot, and only the second is keyed -- so anything the key removes shows
+    as the base reading through where the control is solid.
+    """
+    shot = SHOT
+    spec = {"name": "eyecut-verify-chroma", "tracks": [
+        {"type": "video", "name": "base", "items": [
+            {"path": str(source), "start": i * shot, "duration": shot,
+             "sourceStart": span / 3} for i in range(2)]},
+        {"type": "video", "name": "overlay", "items": [
+            {"path": str(source), "start": 0, "duration": shot,
+             "sourceStart": span / 5, "scale": 0.6},
+            {"path": str(source), "start": shot, "duration": shot,
+             "sourceStart": span / 5, "scale": 0.6,
+             "chroma": {"color": "#0d1618", "intensity": 0.6}}]}]}
+    return spec, [
+        "clip 1 (control): the overlay is solid, hiding the base behind it",
+        "clip 2: the same shot with its dark blue punched out -- the base reads "
+        "through the holes. Identical to clip 1 means the key did nothing",
+        "select clip 2: Remove BG > Chroma key must be TICKED, with the colour "
+        "and a non-zero Intensity. Unticked means `check_flag` bit 32 was lost, "
+        "which is the half of this that no amount of correct material fixes",
+    ]
+
+
 def regression(source: Path, span: float) -> tuple[dict, list[str]]:
     """The bug this work started from: a mask on the base of a two-track spec.
 
@@ -139,7 +169,7 @@ def main() -> int:
                              "beside the old one (nothing is ever deleted)")
     parser.add_argument("--only", action="append", default=None,
                         help="build one draft by name (compositing/text/"
-                             "regression); repeatable")
+                             "chroma/regression); repeatable")
     args = parser.parse_args()
 
     source = args.footage.resolve()
@@ -152,6 +182,7 @@ def main() -> int:
     store = (args.drafts or DRAFT_STORE).resolve()
     builders = {"compositing": lambda: compositing(source, span),
                 "text": lambda: text(source, span),
+                "chroma": lambda: chroma(source, span),
                 "regression": lambda: regression(source, span)}
     wanted = args.only or list(builders)
 

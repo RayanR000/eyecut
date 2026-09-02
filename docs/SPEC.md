@@ -101,10 +101,11 @@ of a two-video-track spec lands on the base, with the overlay untouched — the
 Nothing is left in the **[untested]** column: every key and track type
 capcut-cli 0.21.1 can reach has now been seen in the app, or measured out of one.
 
-**Seven are refused by `validate_spec`** rather than merely documented, because
+**Six are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
-would ever tell the user: `mix`, `chroma`, `cover`, `bgBlur`, `opacity`, and
-`sticker` and `sfx` tracks.
+would ever tell the user: `mix`, `cover`, `bgBlur`, `opacity`, and `sticker` and
+`sfx` tracks. `chroma` was the seventh until the reference draft below was built
+by hand; it works now.
 `bubble` is refused for a different reason — the store boundary below. Every one
 is a **[proven failure]** with the evidence recorded further down.
 
@@ -236,28 +237,61 @@ built, so that was not a corner case.
                  "shadow": true, "shadowAlpha": 0.6}}
   ```
 
-- **Blend modes and chroma keys are written, then thrown away by the app**
-  **[proven failure, reproduced on two independent drafts]**. Both are refused by
-  `validate_spec` — `DISCARDED_BY_APP` in `eyecut/spec.py`. Their entries stay in
-  the `ITEM_OPS` table and their shape checks stay written, so the day capcut-cli
-  writes a struct CapCut keeps, deleting two dict entries turns them back on. `capcut mix-mode`
-  writes `mix_mode: "Screen"` onto the video *material* (as speed does) and
-  `capcut chroma` writes `{type: "chromas", intensity: 0.6}`. Both are present
-  and correct in the draft eyecut hands over, in the root file and the timeline
-  mirror, and `capcut lint` reports it clean. **Open the draft in CapCut once and
-  save, and `mix_mode` is gone from every material while the chroma entry is
-  rewritten to CapCut's own struct with the effect off** — `{type: "none",
-  intensity_value: 0.0}`, keeping only the colour.
+- **A blend mode is written where CapCut does not keep it** **[proven failure,
+  reproduced on two independent drafts]**. `mix` is refused by `validate_spec` —
+  `DISCARDED_BY_APP` in `eyecut/spec.py`. `capcut mix-mode` writes
+  `mix_mode: "Screen"` as a string field onto the video *material*, the way speed
+  is written. It is present and correct in the draft eyecut hands over, in the
+  root file and the timeline mirror, and `capcut lint` reports it clean. Open the
+  draft in CapCut once and save, and `mix_mode` is gone from every material.
 
-  So these two are reachable on paper and useless in practice: a spec can ask for
-  them, the files say they applied, and the first time the user opens the project
-  the app discards them. This is not a general "CapCut rewrites everything": the
-  `canvas_blur` from `bgBlur`, written in the same pass, survives the same save
-  untouched. It just draws nothing — see below.
+  **Where it actually lives is now known**, from the reference draft described
+  under `check_flag` below. CapCut keeps a blend mode as its own material in
+  `materials.effects`, referenced from the segment's `extra_material_refs`:
 
-  Found only because the drafts were opened and the files re-read afterwards. The
-  test suite is green on both keys — it asserts against the file eyecut wrote,
-  which is exactly the evidence SPEC.md says is necessary and not sufficient.
+  ```json
+  {"type": "mix_mode", "name": "Screen", "effect_id": "871339",
+   "resource_id": "6758325170760323597", "value": 1.0, "visible": true,
+   "path": "/Applications/CapCut.app/Contents/MacOS/../Resources/MixMode/d9c1d4ca7ab9…"}
+  ```
+
+  So the string field was never a field CapCut reads, which is why it is stripped
+  rather than honoured — and the CLI adds no `extra_material_refs` entry at all,
+  leaving the segment pointing at no blend mode whatever. The `path` is inside the
+  app bundle, so this is **not** the store boundary that kills `sticker` and
+  `sfx`: every mode ships with the app and is writable.
+
+  **This is a wrong-place problem, not a dead end**, and the fix is the same shape
+  as `repair_chroma_materials`: build the material, reference it, and set
+  `check_flag` bit 8. What it needs first is a catalogue — each of the 12 modes
+  carries its own `effect_id` / `resource_id` / bundle-path triple, and only
+  Screen's is known. One hand-built draft of 12 clips, one mode each, harvested
+  once, the way the sticker id and the mask `constant_material_id` were.
+
+- **A chroma key is written under names CapCut does not read, and gated behind a
+  flag nothing sets** **[proven failure, now repaired]**. `capcut chroma` gets the
+  hard part right — the material is created and referenced from the correct
+  segment — and every field wrong:
+
+  | | CapCut | capcut-cli 0.21.1 |
+  |---|---|---|
+  | `type` | `chroma` | `chromas` |
+  | strength | `intensity_value` | `intensity` |
+  | shadow | `shadow_value` | `shadow` |
+  | `color` | `#0d1618ff` | `#0d1618` |
+  | `path` | the in-bundle `Chroma2` shader | `""` |
+  | absent | `should_transfer_color`, `edge_smooth_value`, `spill_value`, `version` | — |
+
+  `repair_chroma_materials` rewrites all of it after the compile, verified field
+  for field against a key applied by hand in the app. **That alone changed
+  nothing on screen**: the app still showed the Chroma key box unticked over a
+  draft byte-identical to the hand-keyed one but for its ids. The second half is
+  `check_flag`, below. With both, the box is ticked, the colour and strength are
+  populated, and the key renders **[proven]**.
+
+  The lesson worth keeping is the shape of the mistake: "the file matches CapCut's
+  own, field for field" was true, and the feature was still dead. The evidence
+  that settles a question is the app.
 
 - **`cover` sets a key the project list does not read** **[proven failure]**.
   Refused by `validate_spec`; `DISCARDED_COVER` in `eyecut/spec.py` carries the
@@ -281,22 +315,6 @@ built, so that was not a corner case.
   its own thumbnail anyway — which is the state every eyecut draft is already in.
 
   Found only because the drafts were opened and the files re-read afterwards.
-
-  **This is a wrong-shape problem, not a proven dead end.** The entry CapCut
-  writes back carries `spill_value`, `edge_smooth_value` and `version` — fields
-  capcut-cli never wrote, so CapCut *read* the entry, kept the colour and rebuilt
-  the rest in its own struct. It lost the strength because capcut-cli writes
-  `intensity` where CapCut reads **`intensity_value`**. If that is the whole
-  story, both keys are repairable the way `constant_material_id` on masks
-  already is: stamp the native shape after the compile.
-
-  What settles it is the method that produced the `register_media` fixture and
-  the mask `constant_material_id` — **apply a blend mode and a chroma key by hand
-  in CapCut, save, and diff the two entries.** No draft on this machine has ever
-  used either (59 scanned, zero hits), which is why nothing caught it earlier and
-  why the reference has to be made rather than found. Until that diff exists,
-  where CapCut 9.x keeps a blend mode is simply unknown: it is not on the video
-  material, and it is nowhere else in the saved file.
 
 - **`opacity` composites opaque** **[proven failure]**. The one that needed an
   export to catch, and the strongest argument for the rule below it. `clip.alpha`
@@ -378,6 +396,33 @@ built, so that was not a corner case.
   fixture, and the only method that works for this class of question
   **[proven, confirmed in the app]**.
 - **`tm_duration`**, which compile leaves at 0, listing the draft as 00:00.
+
+### `check_flag`, and why a perfect material can do nothing
+
+A **video material**'s `check_flag` is a bitmask of which effects CapCut will
+honour on the segments using it. Everything compile and capcut-cli write leaves
+it at `7`, and the app then ignores decoration it otherwise reads correctly.
+Read off one hand-edited draft, three segments **[proven]**:
+
+| segment | `check_flag` | |
+|---|---|---|
+| untouched | `7` | the baseline everything is built with |
+| blend mode applied by hand | `15` | `7｜8` |
+| chroma key applied by hand | `39` | `7｜32` |
+
+This is what hid `chroma`. Its material was rewritten field-for-field into
+CapCut's own shape, referenced from the right segment at the right position in
+`extra_material_refs` — a draft *byte-identical* to the hand-keyed one except for
+ids — and the app still showed the Chroma key box unticked. Setting bit 32 turned
+it on. `repair_chroma_materials` now does both halves.
+
+Two warnings. The flag lives on the **material**, not the segment, so segments
+sharing a video material share it — compile writes one per segment, but a draft
+CapCut has re-saved can collapse them, which is `collapse_videos`' problem. And
+the bits are only known for these two: everything else is unmapped.
+
+It is not a universal key. `opacity` was retried with bit 8 on the strength of
+this discovery and got *worse*, not better — see its entry above.
 
 ### Reading the app, not the files
 
