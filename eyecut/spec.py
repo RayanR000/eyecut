@@ -59,8 +59,9 @@ DISCARDED_BY_APP = {
     "mix": "CapCut discards blend modes. `capcut mix-mode` writes `mix_mode` "
            "onto the video material correctly, and the first time the project "
            "is opened and saved the app strips it from every material "
-           "[proven on two independent drafts]. Layer the tracks and set "
-           "`opacity` instead.",
+           "[proven on two independent drafts]. Layer the tracks and let the "
+           "top one cover the bottom, or composite outside CapCut -- `opacity` "
+           "is not the workaround it looks like; see below.",
     "bgBlur": "CapCut renders it black. The `canvas_blur` material is written "
               "with the right level and *survives* a save, unlike the two below "
               "-- but the frame either side of a cropped clip is solid black, not "
@@ -71,6 +72,17 @@ DISCARDED_BY_APP = {
               "nothing, because the shape itself was never downloaded [proven]. "
               "No slug can fix this -- `capcut enums` lists shapes the local app "
               "does not have. Use `textStyle` for a background box, which works.",
+    "opacity": "CapCut composites the clip fully opaque. This one is subtler "
+               "than the rest: `clip.alpha` is written correctly, it SURVIVES "
+               "the app's save (unlike `mix`), and the Blend panel even shows "
+               "the reduced value on its Opacity slider -- and then the export "
+               "renders 100% of the top clip. Measured on an exported frame "
+               "against a reconstructed base: where the base behind was "
+               "(161,61,60), a 0.4 composite could not put red below 97, and "
+               "the export read 70 [proven]. A by-hand opacity edit in the app "
+               "produces a byte-identical segment, so there is no key eyecut is "
+               "failing to write. Cut between the shots instead of dissolving "
+               "one over the other, or composite outside CapCut.",
     "chroma": "CapCut discards the chroma key, rewriting the entry into its own "
               "struct with the effect off (`{type: 'none', intensity_value: "
               "0.0}`) and keeping only the colour [proven]. Key the shot outside "
@@ -283,17 +295,13 @@ def _check_compile_fields(item: dict, where: str) -> None:
     """`opacity` and `rotation` are compile's own item fields, not eyecut's.
 
     They reach the draft through the compile itself, so there is no CLI call to
-    fail on them -- an out-of-range opacity is simply written verbatim, the way
-    `intensity` is. Checking the shape here is the only place it can be caught.
+    fail on them. `rotation` works; `opacity` is refused, for the reason in
+    `DISCARDED_BY_APP` -- and refusing it here rather than in `_check_item_ops`
+    is the only difference, since it is a compile field and not an eyecut op.
     """
-    opacity = item.get("opacity")
-    if opacity is not None:
-        if not isinstance(opacity, (int, float)) or isinstance(opacity, bool):
-            raise SpecError(f"{where}: `opacity` must be a number, got {opacity!r}")
-        if not 0 <= opacity <= 1:
-            raise SpecError(f"{where}: `opacity` {opacity} is outside 0–1. It is "
-                            f"written verbatim, so anything else lands in the draft "
-                            f"as a value the CapCut UI cannot express.")
+    if item.get("opacity") is not None:
+        raise SpecError(f"{where}: `opacity` is unusable — "
+                        f"{DISCARDED_BY_APP['opacity']}")
     rotation = item.get("rotation")
     if rotation is not None and (not isinstance(rotation, (int, float))
                                  or isinstance(rotation, bool)):

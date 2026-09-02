@@ -98,13 +98,14 @@ base rather than appended after it. Also confirmed in the app: a mask on the bas
 of a two-video-track spec lands on the base, with the overlay untouched — the
 `(type, track, item)` matcher fix, checked where the files had lied before.
 
-**Written, reaching the draft, not yet seen** **[untested]**: `opacity` and
-`sticker`. Confirmed by a test against the real CLI to land in the draft; the app
-has not confirmed either.
+**Written, reaching the draft, not yet seen** **[untested]**: `sticker`.
+Confirmed by a test against the real CLI to land in the draft; the app has not
+confirmed it.
 
-**Five are refused by `validate_spec`** rather than merely documented, because
+**Six are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
-would ever tell the user: `mix`, `chroma`, `cover`, `bgBlur` and `sfx` tracks.
+would ever tell the user: `mix`, `chroma`, `cover`, `bgBlur`, `opacity` and `sfx`
+tracks.
 `bubble` is refused for a different reason — the store boundary below. Every one
 is a **[proven failure]** with the evidence recorded further down.
 
@@ -298,6 +299,25 @@ built, so that was not a corner case.
   where CapCut 9.x keeps a blend mode is simply unknown: it is not on the video
   material, and it is nowhere else in the saved file.
 
+- **`opacity` composites opaque** **[proven failure]**. The one that needed an
+  export to catch, and the strongest argument for the rule below it. `clip.alpha`
+  is written correctly by compile; it **survives** a CapCut save, unlike `mix`;
+  and the app's own Blend panel shows the reduced value on its Opacity slider --
+  three separate signals of health, all of them wrong. The export composites 100%
+  of the top clip. Measured on the exported frame at 4s of
+  `eyecut-verify-compositing-v2`, an `alpha: 0.4` overlay over a base
+  reconstructed with ffmpeg from the same source and in-point: where the base
+  behind read `(161,61,60)`, the base alone would contribute `0.6 x 161 = 97` to
+  the red channel, and the export read `70` -- below the floor any blend could
+  produce. No seam appears at either edge of the base's 9:16 strip anywhere
+  inside the overlay quad.
+
+  The `mix`/`chroma` question -- *is eyecut failing to write a key CapCut needs?*
+  -- is settled here by the same diff method those two are still waiting on: an
+  opacity edit **made by hand in CapCut** produces a **byte-identical segment**
+  (`clip.alpha: 0.4`, no extra key, no blend material, no new
+  `extra_material_refs`). Same file, same render. There is nothing to write.
+  Refused. To layer two shots, cut between them, or composite outside CapCut.
 - **`bgBlur` renders black, not a blurred fill** **[proven failure]**. The
   `canvas_blur` material is written with `blur: 0.75` for level 3, attached to the
   right segment's `extra_material_refs`, and it *survives* a CapCut save — which
@@ -360,6 +380,12 @@ CapCut draws the full frame plus a guide rather than the cropped result.
 
 **The app is the standard.** Lint and file structure are necessary and not
 sufficient; a claim is `[proven]` only once it has been seen in CapCut.
+
+And *seen* sometimes means measured. `opacity` passed every check short of that:
+it survived the app's save, and the app's own inspector displayed the value back.
+What caught it was an export, one frame, and arithmetic against a reconstructed
+base -- because a screenshot of a dark overlay over a dark base is exactly the
+kind of evidence already misread twice above.
 
 ---
 

@@ -413,13 +413,24 @@ def test_text_ranges_on_a_clip_are_refused():
         validate_spec(spec(video(textRanges=[{"start": 0, "end": 3}])))
 
 
-def test_opacity_out_of_range_is_refused_because_compile_writes_it_verbatim():
-    """`opacity` and `rotation` are compile's own item fields, so there is no CLI
-    call to fail on them: an out-of-range value is simply written, the way
-    `intensity` 5.0 is [proven]. This is the only place it can be caught."""
-    validate_spec(spec(video(opacity=0.5, rotation=90)))
-    with pytest.raises(SpecError, match="`opacity` 50 is outside 0–1"):
-        validate_spec(spec(video(opacity=50)))
+def test_opacity_is_refused_because_capcut_composites_it_opaque():
+    """The subtlest of the discarded keys, and the reason this class needs the
+    app and not the file as its standard: `clip.alpha` is written correctly, it
+    survives CapCut's own save, and the Blend panel shows the reduced value --
+    then the export composites 100% of the top clip. Measured on an exported
+    frame against a reconstructed base: over a base of (161,61,60), a 0.4 blend
+    cannot put red below 97 and the export read 70 [proven]. An opacity edit
+    made by hand in the app writes a byte-identical segment, so there is no
+    missing key to find."""
+    with pytest.raises(SpecError, match="`opacity` is unusable"):
+        validate_spec(spec(video(opacity=0.5)))
+
+
+def test_rotation_is_a_number_of_degrees():
+    """`rotation` is compile's own item field, so there is no CLI call to fail on
+    it: a bad value is simply written. This is the only place it can be caught.
+    Unlike `opacity` beside it, the app honours it -- confirmed on screen."""
+    validate_spec(spec(video(rotation=90)))
     with pytest.raises(SpecError, match="`rotation` must be a number"):
         validate_spec(spec(video(rotation="90deg")))
 
@@ -506,7 +517,7 @@ def test_keys_written_in_the_same_pass_still_pass():
     """The refusal is specific to the three, not a retreat from the coverage."""
     validate_spec(spec({"type": "video", "items": [
         {"path": "/footage/a.mp4", "start": 0, "duration": 4,
-         "crop": {"ratio": "9:16"}, "opacity": 0.5, "rotation": 15}]}))
+         "crop": {"ratio": "9:16"}, "rotation": 15}]}))
 
 
 def test_an_sfx_track_is_refused_because_the_effect_has_no_audio_file():

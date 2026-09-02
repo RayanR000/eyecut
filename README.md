@@ -118,14 +118,17 @@ And, as of 2026-09-02, everything else capcut-cli 0.21.1 can reach — with the
 caveat that reaching the draft and reaching the screen turned out to be different
 things. Confirmed in the app: `crop` (a ratio or a 0–1 rect), `rotation`,
 `textRanges` (multi-colour text), and a second video track compositing over the
-first. Still unconfirmed: `opacity` and `sticker`.
+first. Still unconfirmed: `sticker`.
 
-**Five are refused**, each one written correctly, exiting 0 and linting clean
+**Six are refused**, each one written correctly, exiting 0 and linting clean
 before doing nothing: `mix` (12 blend modes) and `chroma` are discarded the first
 time CapCut saves; `cover` writes a key the project list never reads; `bgBlur`
 survives the save and draws solid black instead of a blurred fill; an `sfx` track
 survives too and is silent, because the sound is a store asset with no local file.
-`bubble` is refused for the same store reason. `validate_spec` rejects all of them
+`bubble` is refused for the same store reason. `opacity` is the one that took an
+export to catch: `clip.alpha` survives the save *and* shows on the app's own
+Blend slider, and the render is still fully opaque — so there is no layering a
+clip over another at half strength, only cutting between them. `validate_spec` rejects all of them
 with the reason and a workaround — a build that accepted them would report success
 for work you will never see. SPEC.md has the evidence.
 
@@ -140,11 +143,13 @@ motion tracking, and anything AI-driven in the app.
  "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True},
  "anim": {"intro": "typewriter", "introDuration": 0.6}}
 
-# an overlay over a reframed base (no `mix` -- CapCut throws blend modes away)
+# an overlay over a reframed base. No `mix` (CapCut throws blend modes away),
+# no `opacity` (it renders opaque), no `bgBlur` (it renders black): the overlay
+# covers what it covers.
 {"type": "video", "name": "base", "items": [
-    {"path": src, "start": 0, "duration": 4, "crop": {"ratio": "9:16"}, "bgBlur": 3}]}
+    {"path": src, "start": 0, "duration": 4, "crop": {"ratio": "9:16"}}]}
 {"type": "video", "name": "overlay", "items": [
-    {"path": src, "start": 0, "duration": 4, "scale": 0.5, "opacity": 0.6}]}
+    {"path": src, "start": 0, "duration": 4, "scale": 0.5, "rotation": 15}]}
 ```
 
 `validate_spec` runs before the compile and rejects what compile accepts but

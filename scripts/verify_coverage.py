@@ -40,6 +40,11 @@ from eyecut.timeline import DRAFT_STORE  # noqa: E402
 #: clip is visibly different footage.
 SHOT = 3.0
 
+#: the sticker the `stickers` draft places. There is no `capcut enums --stickers`
+#: to look one up in; this id was harvested from a draft where one was placed by
+#: hand. Override with `--sticker-id` when it names an asset this install lacks.
+STICKER_ID = "7137268628230638087"
+
 
 def _probe_duration(path: Path) -> float:
     out = subprocess.run(
@@ -50,58 +55,86 @@ def _probe_duration(path: Path) -> float:
 
 
 def compositing(source: Path, span: float) -> tuple[dict, list[str]]:
-    """Background blur, crop, opacity, rotation -- and the two-video-track overlay
-    they mostly exist to serve.
+    """Crop, rotation -- and the two-video-track overlay they mostly exist to
+    serve.
 
-    `mix` and `chroma` were the point of this draft once. Both are now refused by
-    `validate_spec`: they reached the file correctly and CapCut discarded them on
-    the first save.
+    `mix`, `chroma`, `bgBlur` and `opacity` were the point of this draft once.
+    All four are refused by `validate_spec` now. `opacity` was the last to go and
+    the hardest to see: this draft is what caught it, by being exported and
+    measured rather than looked at.
     """
     shot = SHOT
     spec = {"name": "eyecut-verify-compositing", "tracks": [
         {"type": "video", "name": "base", "items": [
             {"path": str(source), "start": 0, "duration": shot, "sourceStart": 0},
             {"path": str(source), "start": shot, "duration": shot,
-             "sourceStart": span / 3, "bgBlur": 3, "crop": {"ratio": "9:16"}},
+             "sourceStart": span / 3, "crop": {"ratio": "9:16"}},
             {"path": str(source), "start": shot * 2, "duration": shot,
              "sourceStart": span / 2, "crop": {"rect": [0.25, 0.25, 0.5, 0.5]}}]},
         {"type": "video", "name": "overlay", "items": [
             {"path": str(source), "start": 0, "duration": shot, "sourceStart": span / 4,
              "scale": 0.5},
             {"path": str(source), "start": shot, "duration": shot,
-             "sourceStart": span / 5, "scale": 0.5, "opacity": 0.4, "rotation": 15},
+             "sourceStart": span / 5, "scale": 0.5, "rotation": 15},
             {"path": str(source), "start": shot * 2, "duration": shot,
              "sourceStart": span / 6, "scale": 0.5}]}]}
     return spec, [
-        "clip 2: the base is a 9:16 slice with a blurred fill behind it -- a "
-        "BLURRED fill, not a black one; the overlay is see-through and tilted "
-        "15 degrees",
+        "clip 2: the base is a 9:16 slice and the overlay over it is tilted 15 "
+        "degrees -- opaque, since `opacity` is refused",
         "clip 3: the base is cropped to its middle quarter",
         "throughout: the overlay sits OVER the base, never appended after it",
     ]
 
 
 def text(source: Path, span: float) -> tuple[dict, list[str]]:
-    """textRanges and bubble, over the textStyle that was already proven."""
+    """textRanges, over the textStyle that was already proven.
+
+    `bubble` was the other half of this draft. It is refused now, for the same
+    store-asset reason as `sfx`: the id reaches the file and the app has nothing
+    local to draw.
+    """
     spec = {"name": "eyecut-verify-text", "tracks": [
         {"type": "video", "items": [
-            {"path": str(source), "start": 0, "duration": SHOT * 3,
+            {"path": str(source), "start": 0, "duration": SHOT * 2,
              "sourceStart": 0}]},
         {"type": "text", "name": "captions", "items": [
             {"text": "GOLD and white", "start": 0, "duration": SHOT, "fontSize": 12,
              "textRanges": [{"start": 0, "end": 4, "font_color": "#FFD700",
                              "bold": True}]},
-            {"text": "in a bubble", "start": SHOT, "duration": SHOT, "fontSize": 12,
-             "bubble": "cloud"},
-            {"text": "styled too", "start": SHOT * 2, "duration": SHOT, "fontSize": 12,
-             "bubble": "rounded",
+            {"text": "styled too", "start": SHOT, "duration": SHOT, "fontSize": 12,
              "textStyle": {"borderWidth": 0.08, "borderColor": "#000000",
                            "shadow": True, "shadowAlpha": 0.6}}]}]}
     return spec, [
         "caption 1: 'GOLD' is gold and bold, 'and white' is not -- one segment, "
         "two styles",
-        "caption 2: the words sit inside a cloud-shaped bubble",
-        "caption 3: a rounded bubble AND the border/shadow, both at once",
+        "caption 2: the border and shadow are both there",
+    ]
+
+
+def stickers(source: Path, span: float) -> tuple[dict, list[str]]:
+    """The one track eyecut builds that nothing has ever seen on screen.
+
+    A sticker is addressed by raw resource id, not slug, so this draft needs one
+    harvested by hand (`--sticker-id`). The failure it is built to catch is the
+    store-asset failure `sfx` and `bubble` already died of: the segment survives
+    the save and draws nothing, because the id names an asset this install never
+    downloaded. If the sticker is invisible, that is the answer.
+    """
+    shot = SHOT
+    spec = {"name": "eyecut-verify-stickers", "tracks": [
+        {"type": "video", "items": [
+            {"path": str(source), "start": 0, "duration": shot * 2,
+             "sourceStart": 0}]},
+        {"type": "sticker", "name": "stickers", "items": [
+            {"resourceId": STICKER_ID, "start": 0, "duration": shot,
+             "x": 0.5, "y": 0.5},
+            {"resourceId": STICKER_ID, "start": shot, "duration": shot,
+             "x": 0.25, "y": 0.75, "scale": 1.5, "rotation": 30}]}]}
+    return spec, [
+        "sticker 1: visible at all, centred -- an empty frame is the store-asset "
+        "failure, not a placement bug",
+        "sticker 2: moved to the lower left, half again as big, tilted 30 degrees",
+        "both survive a save and re-open of the project",
     ]
 
 
@@ -135,9 +168,13 @@ def main() -> int:
     parser.add_argument("--suffix", default="",
                         help="append to each draft name, so a rebuild lands "
                              "beside the old one (nothing is ever deleted)")
+    parser.add_argument("--sticker-id", default=STICKER_ID,
+                        help="resource id for the `stickers` draft, from "
+                             "`capcut harvest-enums` on a draft with one placed "
+                             "by hand")
     parser.add_argument("--only", action="append", default=None,
                         help="build one draft by name (compositing/text/"
-                             "regression); repeatable")
+                             "stickers/regression); repeatable")
     args = parser.parse_args()
 
     source = args.footage.resolve()
@@ -148,8 +185,10 @@ def main() -> int:
         parser.error(f"{source.name} is {span:.1f}s; the drafts need ~12s to cut from")
 
     store = (args.drafts or DRAFT_STORE).resolve()
+    globals()["STICKER_ID"] = args.sticker_id
     builders = {"compositing": lambda: compositing(source, span),
                 "text": lambda: text(source, span),
+                "stickers": lambda: stickers(source, span),
                 "regression": lambda: regression(source, span)}
     wanted = args.only or list(builders)
 
