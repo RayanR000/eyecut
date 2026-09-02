@@ -103,7 +103,8 @@ filters, 9 masks. List them with `capcut enums --scene-effects` and friends.
 Choosing one by name is easy; identifying which one made the flash in someone
 else's video is not, and remains out of scope.
 
-Four things `write_draft` finishes after the compile, because compile does not:
+`write_draft` finishes after the compile everything compile does not, driven by
+one table in `eyecut/ops.py`. The long-standing four:
 **animation** (`anim` on a video or text item — an intro, outro or combo from
 CapCut's 318 catalogue slugs, applied with `capcut text-anim` on a caption and
 `capcut image-anim` on a clip; without it every cut is a hard cut), **text look** (compile's `text-style` op crashes, and `fontSize`/`color` cannot
@@ -115,12 +116,30 @@ leaves the speed material at 1, and the app reads the material) and **masks**
 and matched to the segment by position, then stamped with the
 `constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty).
 
+And, as of 2026-09-01, everything else capcut-cli 0.21.1 can reach: `mix` (12
+blend modes), `chroma`, `bgBlur` (a level 1–4), `crop` (a ratio or a 0–1 rect),
+`textRanges` (multi-colour text), `bubble`, `opacity` and `rotation`, plus
+`sticker` and `sfx` tracks and a top-level `cover`. These reach the draft against
+the real CLI but have not been seen in CapCut yet — build the four checklists
+with `python3 scripts/verify_coverage.py --footage <clip>` and look.
+
+Still out of reach, because capcut-cli cannot reach them either: fonts
+(`capcut enums --fonts` returns `[]`), store-downloaded assets, speed curves,
+motion tracking, and anything AI-driven in the app.
+
 ```python
 {"path": src, "start": 0, "duration": 2, "sourceStart": 120, "speed": 2.0}
 {"path": src, "start": 2, "duration": 4, "mask": {"slug": "circle", "size": 0.7}}
 {"text": "TITLE", "start": 0, "duration": 3,
  "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True},
  "anim": {"intro": "typewriter", "introDuration": 0.6}}
+
+# an overlay that blends rather than covers, over a reframed base
+{"type": "video", "name": "base", "items": [
+    {"path": src, "start": 0, "duration": 4, "crop": {"ratio": "9:16"}, "bgBlur": 3}]}
+{"type": "video", "name": "overlay", "items": [
+    {"path": src, "start": 0, "duration": 4, "scale": 0.5, "mix": "screen",
+     "opacity": 0.6}]}
 ```
 
 `validate_spec` runs before the compile and rejects what compile accepts but
@@ -137,6 +156,9 @@ mis-builds. Each rule below is a mistake that cost a real debugging session:
 | `intensity` is 0–1 | Written verbatim: `5.0` lands in the draft as five times what the CapCut UI can express |
 | Template text does not resize to fit | The template keeps the font size it was designed at; a much longer line runs off both edges of the frame |
 | Every path must be absolute | compile resolves relative paths against the spec file, which eyecut writes into the drafts store — the error then names a path you never wrote |
+| `bgBlur` is a level 1–4, not the fraction it stands for | `0.75` looks right and is rejected only after the draft exists |
+| A `crop` rect is 0–1 fractions of the frame, not pixels | Written verbatim, landing far outside the frame — the same class as `intensity` |
+| A blend mode is written on the material, not the segment | Like speed: the app reads the material, so each segment needs one of its own |
 | Two tracks of one type need distinct `name`s | compile keys a built track on (type, name), so unnamed tracks merge — a base clip and an overlay land on the same track on top of each other, and lint calls it clean |
 | Items on one track may not overlap | The detectable half of the `start`/`sourceStart` mistake above |
 

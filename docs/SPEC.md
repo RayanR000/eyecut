@@ -66,8 +66,8 @@ handling **[proven]**.
 
 ### `write_draft(spec, project_dir)`
 
-Validates the spec, delegates the timeline to `capcut compile`, then finishes the
-three things compile leaves undone. Confirmed end to end: a draft built from
+Validates the spec, delegates the timeline to `capcut compile`, then applies
+everything compile leaves undone — the post-compile layer below. Confirmed end to end: a draft built from
 Sintel footage opened in CapCut with no relink prompt, correct durations, and the
 `Speed 2.0X` badge on the right clip **[proven]**.
 
@@ -78,15 +78,24 @@ the draft layer rejects **[proven failure]**.
 
 ## The spec, and what it reaches
 
-`write_draft` passes the spec through to `capcut compile` untouched. eyecut
-renames nothing and wraps nothing, so a feature capcut-cli gains arrives here for
-free — the cost is that compile's vocabulary is the vocabulary, warts and all.
+`write_draft` passes the spec through to `capcut compile` untouched, except for
+the parts compile has no vocabulary for (`sticker` / `sfx` tracks and `cover`,
+which it rejects outright and eyecut builds afterwards). eyecut renames nothing
+and wraps nothing, so a feature capcut-cli gains arrives here for free — the cost
+is that compile's vocabulary is the vocabulary, warts and all.
 
 **Verified working** **[proven]**: video / audio / text tracks · per-item `speed`,
 `volume`, `scale`, `x`/`y`, `fontSize`, `color`, `sourceStart` · `transition` ·
 `filter` · `effect` · `keyframe` on 11 properties · `audio-fade` · masks (nine
 shapes) · **overlay / picture-in-picture** via a second *named* video track ·
 **captions** from an SRT (one text segment per cue, `sub_type: 1`).
+
+**Complete against capcut-cli 0.21.1** **[untested in the app]**: every remaining
+capability the CLI can reach is now reachable from a spec — `mix` (12 blend
+modes), `chroma`, `bgBlur`, `crop`, `textRanges`, `bubble`, `opacity`,
+`rotation`, plus `sticker` and `sfx` tracks and a top-level `cover`. Each is
+confirmed to reach the draft by a test against the real CLI; none has been seen
+in CapCut yet. Build the four drafts with `scripts/verify_coverage.py` and look.
 
 **Templates — the reuse loop.** Style a title once in CapCut, then apply it
 anywhere: `capcut save-template <project> <segment-id> <name> --out t.json`
@@ -101,13 +110,16 @@ dropped into a template built for an 8-character title runs off both edges of th
 canvas, with only the middle visible **[proven]**. Keep replacement text near the
 length of the original, or save a template per length of line.
 
-**Available, never run** **[untested]**: `text-ranges` and the per-item `opacity`
-/ `rotation` fields.
+**Not reachable**, and not because eyecut has not got to it — capcut-cli 0.21.1
+cannot reach these either: fonts (`capcut enums --fonts` returns `[]`) ·
+store-downloaded assets (`harvest-enums` is a path, not a built one) · speed
+curves, motion tracking, and anything AI-driven in the app.
 
-**Not reachable**: fonts (CapCut's
-names are not published) · store-downloaded assets (`harvest-enums` is a path,
-not a built one) · compositing, blend modes, speed curves, motion tracking, and
-anything AI-driven in the app.
+**Reachable, but not by slug**: stickers. `add-sticker` takes a raw
+`<resource-id>` and there is no `capcut enums --stickers` to look one up in, so a
+`sticker` item names an id — placed by hand in CapCut once, then read out with
+`capcut harvest-enums`. Every other catalogue here is addressed by slug; this one
+is the exception and a slug-shaped value is refused with that recipe.
 
 Effects are named by slug from CapCut's own catalogue — 116 transitions, 345 scene
 effects, 95 character effects, 76 text intros, 10 filters, 9 masks — listed with
@@ -157,6 +169,33 @@ one cost a real debugging session.
 - **The `text-style` operation is refused outright** — it crashes the compiler.
   Set `textStyle` on the text item instead; see below.
 
+### The post-compile layer
+
+Compile builds a timeline and stops. Everything else CapCut can do to a segment
+is a separate capcut-cli command against a segment id, so eyecut applies it
+afterwards. `eyecut/ops.py` is the list of those keys as **one table** —
+`eyecut.draft.apply_item_ops` walks it and `eyecut.spec` validates against the
+same rows, so a key cannot be applicable in one and unknown in the other. Written
+as a function per key it was three near-identical bodies each restating the
+count-mismatch rule; at twelve it would be the first thing to drift.
+
+Two things run in a deliberate order after it. `sticker` and `sfx` tracks **add**
+segments rather than decorate them, so they are built last: earlier, they would
+shift the positions every per-segment op is matched on. And because compile
+rejects a track type it does not know ("tracks[1].type must be one of
+video|audio|text"), those tracks and the top-level `cover` are stripped from the
+spec compile sees — the one place eyecut no longer passes the spec through
+untouched.
+
+**Matching is by (type, track, item).** The nth item of the spec's nth track of a
+type is the nth segment of the built nth track of that type. Keying on
+(type, item) alone — as this did until 2026-09-01 — collapses every video track
+onto one set of positions, so the last track of a type wins every key and a mask
+meant for the base clip lands on the overlay. Silently: the counts still agree,
+so the mismatch guard never fires, and `capcut lint` reports it clean **[proven
+failure, against the real CLI]**. Two named video tracks are how an overlay is
+built, so that was not a corner case.
+
 ### What `write_draft` repairs after the compile
 
 - **Animation.** compile has no animation operation, so every cut is a hard cut
@@ -185,6 +224,19 @@ one cost a real debugging session.
    "textStyle": {"borderWidth": 0.08, "borderColor": "#000000",
                  "shadow": true, "shadowAlpha": 0.6}}
   ```
+
+- **Blend modes live on the material, not the segment.** `capcut mix-mode` writes
+  `mix_mode` onto the video *material*, exactly as speed does — so a segment
+  needs a material of its own for a blend mode to mean anything. compile gives
+  each segment one, and writes no `mix_mode` of its own **[proven]**.
+
+- **`bgBlur` is a level, not the fraction it stands for.** 1–4 map to 0.0625 /
+  0.375 / 0.75 / 1.0. Passing `0.75` is the natural guess and gets a
+  level-shaped error only after the draft exists, so it is refused up front.
+
+- **A `crop` rect is 0–1 fractions of the source frame**, not pixels. Written
+  verbatim otherwise, landing far outside the frame — the same class as
+  `intensity`.
 
 - **Speed.** compile writes `segment.speed` and leaves the speed *material* at 1.
   **CapCut reads the material**, so a clip asked for 2× plays at 1× while its trim

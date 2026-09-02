@@ -23,8 +23,8 @@ from eyecut import media
 from eyecut.media import (MediaProbe, Registration, groups_of, probe,
                           register_media, set_timeline_duration,
                           timeline_duration_us, write_meta)
-from eyecut.spec import (ANIM_OPTIONS, MASK_FLAGS, MASK_OPTIONS, TEXT_STYLE_FLAGS,
-                        TEXT_STYLE_OPTIONS, validate_spec)
+from eyecut.ops import ITEM_OPS, TRACK_OPS_BY_TYPE
+from eyecut.spec import validate_spec
 from eyecut.template import find_template
 
 
@@ -122,7 +122,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     template = Path(template) if template else find_template(store)
 
     spec_path = store / f".{project_dir.name}.spec.json"
-    spec_path.write_text(json.dumps(spec, ensure_ascii=False))
+    spec_path.write_text(json.dumps(_compile_spec(spec), ensure_ascii=False))
     warnings: list[str] = []
     code, stderr = runner(["capcut", "compile", str(spec_path), "--out", str(project_dir),
                            "--template", str(template)], store)
@@ -142,10 +142,15 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     if code != 0:
         raise CompileError(f"capcut register failed ({code}): {stderr.strip()}")
 
+    # order matters: resync_speeds repairs what compile wrote, apply_item_ops
+    # decorates the segments compile built -- and both run while the positions
+    # `_segment_ids` matches on are still the ones compile left behind.
     warnings += resync_speeds(project_dir, runner=runner, store=store)
-    warnings += apply_masks(spec, project_dir, runner=runner, store=store)
-    warnings += apply_text_styles(spec, project_dir, runner=runner, store=store)
-    warnings += apply_animations(spec, project_dir, runner=runner, store=store)
+    warnings += apply_item_ops(spec, project_dir, runner=runner, store=store)
+    # last, because these ADD segments: a sticker or sfx track built earlier
+    # would shift the positions `_segment_ids` matches every op above on
+    warnings += apply_track_ops(spec, project_dir, runner=runner, store=store)
+    warnings += apply_cover(spec, project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
     clear_inherited_media(meta_path)
@@ -159,70 +164,171 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
                  template=template, warnings=warnings)
 
 
-def _mask_argv(mask: str | dict, project_dir: Path, segment_id: str) -> list[str]:
-    settings = {"slug": mask} if isinstance(mask, str) else dict(mask)
-    argv = ["capcut", "mask", str(project_dir), segment_id, settings.pop("slug")]
-    for key, value in settings.items():
-        if key in MASK_FLAGS:
-            if value:
-                argv.append(f"--{key}")
-        else:
-            argv += [MASK_OPTIONS[key], str(value)]
-    return argv
+def apply_item_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                   store: Path | None = None) -> list[str]:
+    """Apply every post-compile item key in the spec to the segment compile made
+    for it.
 
-
-def apply_masks(spec: dict, project_dir: Path, *, runner=_capcut_runner,
-                store: Path | None = None) -> list[str]:
-    """Apply each item's `mask` to the segment compile made for it.
-
-    Masks are the one part of the spec that is eyecut's own: compile has no mask
-    operation at all, so this shells out to `capcut mask` afterwards, the way
-    `resync_speeds` repairs speed.
+    `capcut compile` builds a timeline and stops. Masks, text styling, animation,
+    blend modes, chroma keys, background blur, crops, text ranges and bubbles are
+    each a separate capcut-cli command against a segment id, so they are applied
+    here afterwards -- the way `resync_speeds` repairs speed. `eyecut.ops.ITEM_OPS`
+    is the list; this is the loop.
 
     Items are matched to segments by position (`_segment_ids`). If the counts
-    disagree the masks are skipped with a warning rather than guessed at: a mask
-    on the wrong shot is worse than none.
-    """
-    wanted = [(track.get("type", "video"), index, item["mask"])
-              for track in spec.get("tracks") or []
-              for index, item in enumerate(track.get("items") or [])
-              if item.get("mask") is not None]
-    if not wanted:
-        return []
+    disagree the op is skipped with a warning rather than guessed at: an effect on
+    the wrong shot is worse than none.
 
-    segments = _segment_ids(project_dir)
+    A failing CLI call becomes a warning naming the item rather than an exception,
+    because most of what can fail here is an unknown slug -- `capcut enums` carries
+    hundreds and the app's store adds more, so they cannot be checked up front.
+    The draft is already written and worth keeping; silence is what would not be,
+    since a clip that never animates has nothing in the draft to say why.
+    """
+    segments = None  # read once, and only if something asks for it
     store = store or project_dir.parent
-    warnings = []
-    applied = False
-    for track_type, index, mask in wanted:
-        segment_id = segments.get((track_type, index))
-        if segment_id is None:
-            warnings.append(f"mask on {track_type} item {index} skipped: compile "
-                            f"produced no matching segment")
-            continue
-        code, stderr = runner(_mask_argv(mask, project_dir, segment_id), store)
-        if code != 0:
-            warnings.append(f"mask on {track_type} item {index} failed: "
-                            f"{stderr.strip()[:120]}")
-        else:
-            applied = True
-    if applied:
-        stamp_mask_ids(project_dir)
+    warnings: list[str] = []
+    for op in ITEM_OPS:
+        applied = False
+        for where, _item, value in _spec_items(spec, op.key, types=op.tracks):
+            if segments is None:
+                segments = _segment_ids(project_dir)
+            segment_id = segments.get(where)
+            if segment_id is None:
+                warnings.append(f"{op.key} on {_where(where)} skipped: compile "
+                                f"produced no matching segment")
+                continue
+            argv = op.argv(value, project_dir, segment_id, where[0])
+            code, stderr = runner(argv, store)
+            if code != 0:
+                warnings.append(f"{op.key} on {_where(where)} failed: "
+                                f"{stderr.strip()[:120]}")
+            else:
+                applied = True
+        if applied and op.after is not None:
+            AFTER_HOOKS[op.after](project_dir)
     return warnings
 
 
-def _segment_ids(project_dir: Path) -> dict[tuple[str, int], str]:
-    """(track type, position) -> segment id, for the timeline compile just built.
+def _segment_ids(project_dir: Path) -> dict[tuple[str, int, int], str]:
+    """(track type, track position, item position) -> segment id, for the timeline
+    compile just built.
 
     Items are matched to segments by position: the nth item of the spec's nth
-    track of a type is the nth segment of the built track of that type. Compile
-    preserves both orders, and the filter/effect tracks it appends carry no items
-    to confuse the count.
+    track of a type is the nth segment of the built nth track of that type.
+    Compile preserves both orders, and the filter/effect tracks it appends carry
+    no items to confuse the count.
+
+    The track position is load-bearing, not decoration. Keying on (type, item)
+    alone collapses every video track onto one set of positions, so the last
+    track of a type wins every key and a mask meant for the base clip is applied
+    to the overlay -- silently, since the counts still agree and the mismatch
+    guard never fires [proven failure, against the real CLI]. Two video tracks
+    are how an overlay is built, so that is not a corner case.
     """
     built = json.loads((project_dir / "draft_info.json").read_text())
-    return {(track["type"], index): segment["id"]
-            for track in built.get("tracks", [])
-            for index, segment in enumerate(track.get("segments", []))}
+    seen: dict[str, int] = {}
+    ids = {}
+    for track in built.get("tracks", []):
+        track_type = track["type"]
+        ordinal = seen.get(track_type, 0)
+        seen[track_type] = ordinal + 1
+        for index, segment in enumerate(track.get("segments", [])):
+            ids[(track_type, ordinal, index)] = segment["id"]
+    return ids
+
+
+# `ItemOp.after` names a repair that is cheaper over the whole draft than per
+# segment. It is a name rather than the function itself because `eyecut.ops`
+# cannot import this module -- this one imports it.
+AFTER_HOOKS = {}
+
+
+def _compile_spec(spec: dict) -> dict:
+    """The spec with the parts compile cannot parse taken out.
+
+    eyecut passes the spec through untouched wherever it can -- that is what makes
+    a feature capcut-cli gains arrive here for free. The exceptions are the parts
+    compile has no vocabulary for: `sticker` and `sfx` tracks, which it rejects
+    outright ("tracks[1].type must be one of video|audio|text"), and the top-level
+    `cover`. Both are built afterwards, so they are removed here rather than
+    renamed or wrapped.
+    """
+    trimmed = {key: value for key, value in spec.items() if key != "cover"}
+    trimmed["tracks"] = [track for track in spec.get("tracks") or []
+                         if track.get("type", "video") not in TRACK_OPS_BY_TYPE]
+    return trimmed
+
+
+def apply_track_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                    store: Path | None = None) -> list[str]:
+    """Build the tracks compile does not: `sticker` and `sfx`.
+
+    Compile knows video, audio and text. A sticker is an overlay resource and a
+    sound effect is a catalogue lookup, so each is its own capcut-cli command that
+    creates the track on first use -- one call per item, `--track-name` carrying
+    the spec's track name so two of a type stay apart the way they must elsewhere.
+
+    Unlike the item ops these match nothing: they add segments rather than
+    decorate ones compile made, which is exactly why they run after everything
+    that matches by position.
+    """
+    store = store or project_dir.parent
+    warnings: list[str] = []
+    for track in spec.get("tracks") or []:
+        op = TRACK_OPS_BY_TYPE.get(track.get("type", "video"))
+        if op is None:
+            continue
+        for index, item in enumerate(track.get("items") or []):
+            argv = op.argv(item, project_dir, track.get("name") or "")
+            code, stderr = runner(argv, store)
+            if code != 0:
+                warnings.append(f"{op.type} item {index} ({item[op.subject]}) "
+                                f"failed: {stderr.strip()[:120]}")
+    return warnings
+
+
+def apply_cover(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                store: Path | None = None) -> list[str]:
+    """Set the draft's thumbnail from `spec.cover`.
+
+    CapCut re-renders the thumbnail on next open, so this only has to name the
+    image and the frame it stands for.
+    """
+    cover = spec.get("cover")
+    if cover is None:
+        return []
+    if isinstance(cover, str):
+        cover = {"path": cover}
+    argv = ["capcut", "add-cover", str(project_dir), cover["path"]]
+    if cover.get("time") is not None:
+        # the CLI takes milliseconds; the spec is in seconds like everything else
+        argv += ["--time", str(int(cover["time"] * 1000))]
+    code, stderr = runner(argv, store or project_dir.parent)
+    return [] if code == 0 else [f"cover failed: {stderr.strip()[:120]}"]
+
+
+def _where(where: tuple[str, int, int]) -> str:
+    """A spec coordinate as the caller wrote it, for a warning they have to act on."""
+    track_type, track_index, item_index = where
+    return f"{track_type} track {track_index} item {item_index}"
+
+
+def _spec_items(spec: dict, key: str, *, types: tuple[str, ...] | None = None):
+    """((track type, track position, item position), item, value) per item carrying
+    `key`, in the same coordinates `_segment_ids` returns."""
+    seen: dict[str, int] = {}
+    found = []
+    for track in spec.get("tracks") or []:
+        track_type = track.get("type", "video")
+        ordinal = seen.get(track_type, 0)
+        seen[track_type] = ordinal + 1
+        if types is not None and track_type not in types:
+            continue
+        for index, item in enumerate(track.get("items") or []):
+            if item.get(key) is not None:
+                found.append(((track_type, ordinal, index), item, item[key]))
+    return found
 
 
 def _text_style_argv(style: dict, project_dir: Path, segment_id: str) -> list[str]:
@@ -251,26 +357,22 @@ def apply_text_styles(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     footage of any brightness, and `fontSize`/`color` on the item -- all compile
     offers -- cannot supply either.
     """
-    wanted = [(index, item["textStyle"])
-              for track in spec.get("tracks") or []
-              if track.get("type") == "text"
-              for index, item in enumerate(track.get("items") or [])
-              if item.get("textStyle") is not None]
+    wanted = _spec_items(spec, "textStyle", types=("text",))
     if not wanted:
         return []
 
     segments = _segment_ids(project_dir)
     store = store or project_dir.parent
     warnings = []
-    for index, style in wanted:
-        segment_id = segments.get(("text", index))
+    for where, _item, style in wanted:
+        segment_id = segments.get(where)
         if segment_id is None:
-            warnings.append(f"textStyle on text item {index} skipped: compile "
+            warnings.append(f"textStyle on {_where(where)} skipped: compile "
                             f"produced no matching segment")
             continue
         code, stderr = runner(_text_style_argv(style, project_dir, segment_id), store)
         if code != 0:
-            warnings.append(f"textStyle on text item {index} failed: "
+            warnings.append(f"textStyle on {_where(where)} failed: "
                             f"{stderr.strip()[:120]}")
     return warnings
 
@@ -290,29 +392,26 @@ def apply_animations(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     item. Silence would leave a clip that simply never animates, with nothing in
     the draft to say why.
     """
-    wanted = [(track.get("type", "video"), index, item["anim"])
-              for track in spec.get("tracks") or []
-              for index, item in enumerate(track.get("items") or [])
-              if item.get("anim") is not None]
+    wanted = _spec_items(spec, "anim")
     if not wanted:
         return []
 
     segments = _segment_ids(project_dir)
     store = store or project_dir.parent
     warnings = []
-    for track_type, index, anim in wanted:
-        segment_id = segments.get((track_type, index))
+    for where, _item, anim in wanted:
+        segment_id = segments.get(where)
         if segment_id is None:
-            warnings.append(f"anim on {track_type} item {index} skipped: compile "
+            warnings.append(f"anim on {_where(where)} skipped: compile "
                             f"produced no matching segment")
             continue
-        verb = "text-anim" if track_type == "text" else "image-anim"
+        verb = "text-anim" if where[0] == "text" else "image-anim"
         argv = ["capcut", verb, str(project_dir), segment_id]
         for key, value in anim.items():
             argv += [ANIM_OPTIONS[key], str(value)]
         code, stderr = runner(argv, store)
         if code != 0:
-            warnings.append(f"anim on {track_type} item {index} failed: "
+            warnings.append(f"anim on {_where(where)} failed: "
                             f"{stderr.strip()[:120]}")
     return warnings
 
@@ -335,6 +434,10 @@ def stamp_mask_ids(project_dir: Path) -> int:
     if stamped:
         draft_info.write_text(json.dumps(data, ensure_ascii=False))
     return stamped
+
+
+
+AFTER_HOOKS["stamp_mask_ids"] = stamp_mask_ids
 
 
 def resync_speeds(project_dir: Path, *, runner=_capcut_runner,

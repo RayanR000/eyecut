@@ -361,3 +361,154 @@ def test_an_animation_with_a_duration_but_no_slug_is_refused():
     with pytest.raises(SpecError, match="introDuration"):
         validate_spec(spec({"type": "text", "items": [
             {"text": "T", "start": 0, "duration": 3, "anim": {"introDuration": 0.5}}]}))
+
+
+# --------------------------------------------------------------------------
+# the post-compile item keys. Everything here is refused before the compile
+# because the CLI behind each key reports a bad value by exiting non-zero
+# *after* the draft exists -- and nothing downstream re-reads it, so the draft
+# opens looking exactly like one nobody asked to change.
+# --------------------------------------------------------------------------
+
+def video(**item):
+    return {"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4, **item}]}
+
+
+def text(**item):
+    return {"type": "text", "items": [
+        {"text": "TITLE", "start": 0, "duration": 3, **item}]}
+
+
+def test_blend_modes_pass_and_an_invented_one_is_refused():
+    """Unlike the slug catalogues, the 12 blend modes are a closed list: they are
+    written into the draft as an enum rather than looked up in the app's store, so
+    an unknown one is a mistake and not a resource eyecut has not heard of."""
+    validate_spec(spec(video(mix="multiply")))
+    validate_spec(spec(video(mix={"mode": "screen"})))
+    with pytest.raises(SpecError, match="unknown blend mode 'lighter'"):
+        validate_spec(spec(video(mix="lighter")))
+
+
+def test_a_blend_mode_on_a_caption_is_refused():
+    with pytest.raises(SpecError, match="`mix` only applies to video items"):
+        validate_spec(spec(text(mix="multiply")))
+
+
+def test_chroma_needs_a_hex_colour_and_an_intensity_in_range():
+    validate_spec(spec(video(chroma="#00FF00")))
+    validate_spec(spec(video(chroma={"color": "#00FF00", "intensity": 0.7})))
+    with pytest.raises(SpecError, match='chroma `color` must be a "#RRGGBB" string'):
+        validate_spec(spec(video(chroma={"color": "green"})))
+    with pytest.raises(SpecError, match="outside 0–1"):
+        validate_spec(spec(video(chroma={"color": "#00FF00", "intensity": 50})))
+
+
+def test_bg_blur_is_a_level_not_the_fraction_it_stands_for():
+    """`capcut bg-blur` takes 1-4, which map to 0.0625 / 0.375 / 0.75 / 1.0.
+    Passing the fraction is the natural mistake and gets a level-shaped error only
+    after the draft exists."""
+    validate_spec(spec(video(bgBlur=3)))
+    with pytest.raises(SpecError, match="`bgBlur` is a level"):
+        validate_spec(spec(video(bgBlur=0.75)))
+
+
+def test_crop_takes_exactly_one_of_ratio_or_rect():
+    validate_spec(spec(video(crop="9:16")))
+    validate_spec(spec(video(crop={"rect": [0.1, 0.1, 0.8, 0.8]})))
+    with pytest.raises(SpecError, match="exactly one of `ratio`"):
+        validate_spec(spec(video(crop={"ratio": "9:16", "rect": [0, 0, 1, 1]})))
+    with pytest.raises(SpecError, match="`crop` must be a non-empty object"):
+        validate_spec(spec(video(crop={})))
+
+
+def test_a_crop_rect_is_fractions_of_the_frame_not_pixels():
+    """The rect is 0-1 fractions of the source frame. Pixels are the natural guess
+    and are written verbatim, landing far outside the frame."""
+    with pytest.raises(SpecError, match="0–1 fractions of the source frame"):
+        validate_spec(spec(video(crop={"rect": [0, 0, 1920, 1080]})))
+    with pytest.raises(SpecError, match=r"crop `rect` is \[x, y, w, h\]"):
+        validate_spec(spec(video(crop={"rect": [0, 0, 1]})))
+
+
+def test_text_ranges_are_character_spans_that_have_to_cover_something():
+    validate_spec(spec(text(textRanges=[{"start": 0, "end": 3, "font_color": "#FFD700"}])))
+    with pytest.raises(SpecError, match="needs `end`"):
+        validate_spec(spec(text(textRanges=[{"start": 0}])))
+    with pytest.raises(SpecError, match="covers nothing"):
+        validate_spec(spec(text(textRanges=[{"start": 3, "end": 3}])))
+    with pytest.raises(SpecError, match="unknown key 'colour'"):
+        validate_spec(spec(text(textRanges=[{"start": 0, "end": 3, "colour": "#FFF"}])))
+
+
+def test_text_ranges_on_a_clip_are_refused():
+    with pytest.raises(SpecError, match="`textRanges` only applies to text items"):
+        validate_spec(spec(video(textRanges=[{"start": 0, "end": 3}])))
+
+
+def test_a_bubble_needs_a_slug_and_only_fits_a_caption():
+    validate_spec(spec(text(bubble="cloud")))
+    with pytest.raises(SpecError, match="`bubble` only applies to text items"):
+        validate_spec(spec(video(bubble="cloud")))
+
+
+def test_opacity_out_of_range_is_refused_because_compile_writes_it_verbatim():
+    """`opacity` and `rotation` are compile's own item fields, so there is no CLI
+    call to fail on them: an out-of-range value is simply written, the way
+    `intensity` 5.0 is [proven]. This is the only place it can be caught."""
+    validate_spec(spec(video(opacity=0.5, rotation=90)))
+    with pytest.raises(SpecError, match="`opacity` 50 is outside 0–1"):
+        validate_spec(spec(video(opacity=50)))
+    with pytest.raises(SpecError, match="`rotation` must be a number"):
+        validate_spec(spec(video(rotation="90deg")))
+
+
+# --------------------------------------------------------------------------
+# the tracks compile does not build
+# --------------------------------------------------------------------------
+
+STICKER = {"type": "sticker", "items": [
+    {"resourceId": "7137268628230638087", "start": 0, "duration": 2}]}
+SFX = {"type": "sfx", "items": [{"slug": "big-house", "start": 0, "duration": 2}]}
+
+
+def test_sticker_and_sfx_tracks_pass_alongside_a_video_track():
+    validate_spec(spec(VIDEO, STICKER, SFX))
+
+
+def test_a_spec_of_only_built_after_tracks_leaves_compile_nothing_to_build():
+    """sticker and sfx are stripped out before compile sees the spec, so a spec
+    made of nothing else hands compile an empty track list."""
+    with pytest.raises(SpecError, match="at least one video, audio or text track"):
+        validate_spec(spec(SFX))
+
+
+def test_a_sticker_needs_a_resource_id_because_there_is_no_slug_catalogue():
+    """Every other catalogue here is addressed by slug. Stickers are not:
+    `capcut enums` has no --stickers, so the id comes from harvest-enums against a
+    draft where one was placed by hand."""
+    with pytest.raises(SpecError, match="not a slug"):
+        validate_spec(spec(VIDEO, {"type": "sticker", "items": [
+            {"resourceId": "heart", "start": 0, "duration": 2}]}))
+
+
+def test_a_per_segment_key_on_a_sticker_is_refused():
+    """Stickers are created by eyecut, not compile, so they have no compiled
+    segment for a mask to be matched against."""
+    with pytest.raises(SpecError, match="unknown sticker key 'mask'"):
+        validate_spec(spec(VIDEO, {"type": "sticker", "items": [
+            {"resourceId": "7137268628230638087", "start": 0, "duration": 2,
+             "mask": "circle"}]}))
+
+
+def test_an_unknown_track_type_is_named_with_the_ones_that_exist():
+    with pytest.raises(SpecError, match="unknown track type 'subtitle'"):
+        validate_spec(spec(VIDEO, {"type": "subtitle", "items": []}))
+
+
+def test_a_cover_path_must_be_absolute_like_every_other_path():
+    validate_spec({"name": "t", "tracks": [VIDEO], "cover": "/frames/hero.png"})
+    validate_spec({"name": "t", "tracks": [VIDEO],
+                   "cover": {"path": "/frames/hero.png", "time": 2}})
+    with pytest.raises(SpecError, match="must be an absolute path"):
+        validate_spec({"name": "t", "tracks": [VIDEO], "cover": "frames/hero.png"})

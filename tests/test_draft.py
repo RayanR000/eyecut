@@ -573,3 +573,174 @@ def test_an_animation_in_the_spec_reaches_the_segment_it_names(tmp_path, drafts_
     assert animated["Typewriter"]["target_timerange"]["duration"] == 3_000_000, "the caption"
     assert [anim["animations"][0]["duration"] for anim in animations.values()
             if anim["animations"][0]["name"] == "Typewriter"] == [600_000]
+
+
+@capcut_cli
+def test_a_mask_on_the_base_track_does_not_land_on_the_overlay(tmp_path, drafts_dir,
+                                                               monkeypatch):
+    """Two video tracks are how an overlay is built, and the matcher has to tell
+    them apart.
+
+    Keying segments on (type, position) alone collapses every video track onto one
+    set of positions, so the LAST track of a type wins every key: a mask meant for
+    the base clip is applied to the overlay instead -- silently, because the counts
+    still agree and the mismatch guard never fires. (Masking the overlay hides the
+    bug, since the overlay is the track that overwrites.) The overlay here carries
+    no mask, so a mask that lands on it fails this test.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-overlay-mask", "tracks": [
+        {"type": "video", "name": "base", "items": [
+            {"path": str(source), "start": 0, "duration": 8, "sourceStart": 0,
+             "mask": {"slug": "circle", "size": 0.6}}]},
+        {"type": "video", "name": "overlay", "items": [
+            {"path": str(source), "start": 2, "duration": 4, "sourceStart": 8,
+             "scale": 0.4}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == []
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    masked = {m["id"] for m in built["materials"]["common_mask"]}
+    assert len(masked) == 1, "one mask asked for, one mask written"
+
+    tracks = {t.get("name"): t for t in built["tracks"] if t["type"] == "video"}
+    base, overlay = tracks["base"]["segments"], tracks["overlay"]["segments"]
+    assert set(base[0]["extra_material_refs"]) & masked, \
+        "the base clip is the one that asked for a mask"
+    assert not (set(overlay[0]["extra_material_refs"]) & masked), \
+        "the overlay clip asked for no mask"
+
+
+@capcut_cli
+def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, monkeypatch):
+    """Blend mode, chroma key, background blur and crop, applied against the real
+    CLI.
+
+    Each is a separate capcut-cli command against a segment id, so what this pins
+    is the argv shape: a wrong flag name exits non-zero *after* the draft exists,
+    and nothing downstream re-reads it. The first clip carries every key and the
+    second carries none, so a key applied to the wrong segment fails here.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-item-ops", "tracks": [{"type": "video", "items": [
+        {"path": str(source), "start": 0, "duration": 4, "sourceStart": 0,
+         "mix": "screen", "chroma": {"color": "#00FF00", "intensity": 0.7},
+         "bgBlur": 3, "crop": {"ratio": "9:16"}},
+        {"path": str(source), "start": 4, "duration": 4, "sourceStart": 8}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == [], "every key applied cleanly"
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    segments = [s for t in built["tracks"] if t["type"] == "video" for s in t["segments"]]
+    decorated, plain = segments
+
+    materials = {m["id"]: m for m in built["materials"]["videos"]}
+    styled = materials[decorated["material_id"]]
+    untouched = materials[plain["material_id"]]
+
+    # the blend mode lives on the MATERIAL, not the segment -- the same shape as
+    # the speed bug, and the reason each segment needs a material of its own
+    assert styled["mix_mode"] == "Screen"
+    assert "mix_mode" not in untouched, "compile writes no blend mode of its own"
+
+    chromas = built["materials"].get("chromas") or []
+    assert len(chromas) == 1, "one chroma key asked for, one written"
+    assert chromas[0]["id"] in decorated["extra_material_refs"]
+
+    blurred = [c for c in built["materials"]["canvases"] if c["type"] == "canvas_blur"]
+    assert [c["blur"] for c in blurred] == [0.75], "level 3 is 0.75 behind the scenes"
+
+    # 9:16 out of a 4:3 source keeps the middle 42% of the width, full height
+    crop = styled["crop"]
+    assert crop["upper_left_y"] == 0 and crop["lower_left_y"] == 1
+    assert round(crop["lower_right_x"] - crop["upper_left_x"], 3) == 0.422
+    assert untouched["crop"]["lower_right_x"] == 1, "the second clip is uncropped"
+
+
+@capcut_cli
+def test_text_ranges_and_a_bubble_reach_the_caption(tmp_path, drafts_dir, monkeypatch):
+    """`textRanges` is multi-colour text -- one word gold, the rest the base style
+    -- and `bubble` is the speech-bubble shape behind it. Both were listed
+    reachable and neither had ever been run."""
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    spec = {"name": "eyecut-text-ranges", "tracks": [
+        {"type": "video", "items": [
+            {"path": str(source), "start": 0, "duration": 6, "sourceStart": 0}]},
+        {"type": "text", "items": [
+            {"text": "GOLD and white", "start": 0, "duration": 3, "fontSize": 24,
+             "textRanges": [{"start": 0, "end": 4, "font_color": "#FFD700",
+                             "bold": True}],
+             "bubble": "cloud"}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == []
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    caption = built["materials"]["texts"][0]
+    content = json.loads(caption["content"])
+    styles = content["styles"]
+    assert len(styles) > 1, "the gold word is styled apart from the rest"
+    assert any(s["range"] == [0, 4] for s in styles), "the range the spec asked for"
+    assert caption.get("bubble_effect_id"), "the bubble shape reached the caption"
+
+
+@capcut_cli
+def test_an_sfx_track_and_a_cover_are_built_after_the_compile(tmp_path, drafts_dir,
+                                                              monkeypatch):
+    """compile knows video, audio and text. A sound effect is a catalogue lookup
+    on a track of its own, and the cover is the draft's thumbnail -- neither
+    reachable from a spec before.
+
+    These run last because they ADD segments: built earlier they would shift the
+    positions every per-segment op matches on. The mask here is the canary --
+    it must still land on the clip it names.
+    """
+    monkeypatch.undo()
+    source = tmp_path / "a.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=size=320x240:rate=30:duration=20",
+                    "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
+    cover = tmp_path / "cover.png"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x240:d=1",
+                    "-frames:v", "1", str(cover)], capture_output=True, check=True)
+    sfx = json.loads(subprocess.run(["capcut", "enums", "--audio-effects"],
+                                    capture_output=True, text=True, check=True).stdout)
+    spec = {"name": "eyecut-tracks", "cover": {"path": str(cover), "time": 2},
+            "tracks": [
+                {"type": "video", "items": [
+                    {"path": str(source), "start": 0, "duration": 6, "sourceStart": 0,
+                     "mask": {"slug": "circle", "size": 0.6}}]},
+                {"type": "sfx", "name": "hits", "items": [
+                    {"slug": sfx[0]["slug"], "start": 1, "duration": 2, "volume": 0.5}]}]}
+
+    draft = write_draft(spec, drafts_dir / "proj", [])
+
+    assert draft.warnings == []
+    built = json.loads((draft.path / "draft_info.json").read_text())
+    audio = [t for t in built["tracks"] if t["type"] == "audio"]
+    assert len(audio) == 1 and len(audio[0]["segments"]) == 1
+    assert audio[0]["segments"][0]["target_timerange"] == {"start": 1_000_000,
+                                                           "duration": 2_000_000}
+
+    masked = {m["id"] for m in built["materials"]["common_mask"]}
+    clip = next(s for t in built["tracks"] if t["type"] == "video"
+                for s in t["segments"])
+    assert set(clip["extra_material_refs"]) & masked, \
+        "the sfx track must not shift what the mask matched"
+
+    assert built["cover"]["path"] == str(cover)
+    assert built["cover"]["time_ms"] == 2000

@@ -15,12 +15,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from eyecut.ops import (ITEM_OPS, MEDIA_TRACKS, TRACK_OPS_BY_TYPE,
+                        TRACK_TYPES, SpecError)
+
 US = 1_000_000
 
-
-class SpecError(ValueError):
-    """The spec would not build what the caller meant. Raised before anything is
-    written, so a rejected spec leaves no half-made draft behind."""
+__all__ = ["SpecError", "validate_spec", "US"]
 
 
 # dist/decorators.js PROPERTY_MAP
@@ -41,58 +41,6 @@ AUDIO_ONLY = ("audio-fade",)
 SPANNING = ("filter", "effect")
 # ops that name a file of their own rather than a declared item
 FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json"}
-
-# `capcut enums --masks`. Masks are the one thing here compile does NOT do: there
-# is no mask operation, so `mask` is eyecut's own item key, applied after the
-# compile with `capcut mask <segment> <slug>`. The rest of the spec stays
-# compile's vocabulary verbatim.
-MASK_SLUGS = ("split", "filmstrip", "circle", "rectangle", "stars", "heart",
-              "text", "brush", "pen")
-# `capcut mask` option names, keyed by the spec key that carries them
-MASK_OPTIONS = {"centerX": "--center-x", "centerY": "--center-y", "size": "--size",
-                "rotation": "--rotation", "feather": "--feather",
-                "rectWidth": "--rect-width", "roundCorner": "--round-corner"}
-MASK_FLAGS = ("invert",)
-
-# `capcut text-style` option names, keyed by the spec key that carries them. The
-# standalone command is the whole reason `textStyle` is an item key: the compile
-# OPERATION of the same name crashes (see BROKEN_UPSTREAM), while the command it
-# wraps applies the identical border and shadow to a built segment and reports
-# `{"ok":true,"applied":["shadow","border"]}` [proven against 0.21.1].
-TEXT_STYLE_OPTIONS = {
-    "alpha": "--alpha", "fixedWidth": "--fixed-width", "fixedHeight": "--fixed-height",
-    "shadowAlpha": "--shadow-alpha", "shadowAngle": "--shadow-angle",
-    "shadowColor": "--shadow-color", "shadowDistance": "--shadow-distance",
-    "shadowSmoothing": "--shadow-smoothing",
-    "borderWidth": "--border-width", "borderColor": "--border-color",
-    "borderAlpha": "--border-alpha",
-    "bgColor": "--bg-color", "bgAlpha": "--bg-alpha", "bgStyle": "--bg-style",
-    "bgRoundRadius": "--bg-round-radius", "bgWidth": "--bg-width",
-    "bgHeight": "--bg-height", "bgHOffset": "--bg-h-offset", "bgVOffset": "--bg-v-offset",
-    "preset": "--preset"}
-TEXT_STYLE_FLAGS = ("shadow", "vertical")
-# these take a "#RRGGBB" string; everything else in OPTIONS is a number
-TEXT_STYLE_COLORS = ("shadowColor", "borderColor", "bgColor")
-# a make-preset file, so it is a path and gets the absolute-path rule
-TEXT_STYLE_PATHS = ("preset",)
-
-# `capcut text-anim` / `image-anim` option names, keyed by the spec key. compile
-# has no animation operation either, so `anim` is a third eyecut item key applied
-# afterwards. Which command runs is decided by the track type: captions animate
-# with text-anim, clips and stills with image-anim.
-ANIM_OPTIONS = {"intro": "--intro", "outro": "--outro", "combo": "--combo",
-                "introDuration": "--intro-duration",
-                "outroDuration": "--outro-duration",
-                "comboDuration": "--combo-duration"}
-# a slug and the duration that belongs to it
-ANIM_SLOTS = {"intro": "introDuration", "outro": "outroDuration",
-              "combo": "comboDuration"}
-# `capcut text-anim` takes --intro/--outro only; --combo is image-anim's
-ANIM_TEXT_SLOTS = ("intro", "outro")
-# the slugs are NOT checked against a list: `capcut enums` carries 318 of them
-# across the five animation catalogues and the app's store adds more, so a
-# whitelist here would reject valid ones. An unknown slug makes the CLI exit
-# non-zero after the draft exists, which `apply_animations` turns into a warning.
 
 # `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
 # "Cannot read properties of undefined (reading 'alpha')". Refused here with an
@@ -238,95 +186,73 @@ def _check_span(op: dict, where: str) -> None:
                         f"what the CapCut UI can express.")
 
 
-def _check_anim(anim: Any, track_type: str, where: str) -> None:
-    """`anim` is eyecut's own key, applied after the compile like `mask`.
-
-    The slug itself is left to the CLI (see ANIM_OPTIONS); what is caught here is
-    the shape, because every mistake in it produces a draft that opens looking
-    exactly like one nobody asked to animate.
-    """
-    if track_type not in ("video", "text"):
-        raise SpecError(f"{where}: `anim` only applies to video and text items, not "
-                        f"{track_type} (an audio segment has nothing to animate)")
-    if not isinstance(anim, dict) or not anim:
-        raise SpecError(f"{where}: `anim` must be a non-empty object of "
-                        f"intro/outro/combo, got {anim!r}")
-    for key, value in anim.items():
-        if key not in ANIM_OPTIONS:
-            raise SpecError(f"{where}: unknown animation key {key!r}. "
-                            f"One of: {', '.join(ANIM_OPTIONS)}")
-        if key in ANIM_SLOTS:
-            if track_type == "text" and key not in ANIM_TEXT_SLOTS:
-                raise SpecError(f"{where}: `{key}` is a video animation — "
-                                f"`capcut text-anim` takes only "
-                                f"{' and '.join(ANIM_TEXT_SLOTS)}")
-            if not isinstance(value, str) or not value:
-                raise SpecError(f"{where}: animation `{key}` must be a slug string, "
-                                f"got {value!r}. List them with `capcut enums "
-                                f"--text-intros` and friends.")
-        elif not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise SpecError(f"{where}: animation `{key}` must be a number of "
-                            f"seconds, got {value!r}")
-    for slot, duration in ANIM_SLOTS.items():
-        if duration in anim and slot not in anim:
-            raise SpecError(f"{where}: `{duration}` without `{slot}` animates "
-                            f"nothing — the duration belongs to a slug that is "
-                            f"not there.")
-
-
-def _check_text_style(style: Any, track_type: str, where: str) -> None:
-    """`textStyle` is eyecut's own key, like `mask`: applied after the compile.
-
-    Everything here is refused before the compile because `capcut text-style`
-    reports a bad option by exiting non-zero *after* the draft exists -- and
-    nothing downstream re-reads it, so the caption just keeps the default look
-    and the draft opens looking untouched.
-    """
-    if track_type != "text":
-        raise SpecError(f"{where}: `textStyle` only applies to text items, not "
-                        f"{track_type} (it is applied with `capcut text-style`, "
-                        f"which needs a text segment)")
-    if not isinstance(style, dict) or not style:
-        raise SpecError(f"{where}: `textStyle` must be a non-empty object of "
-                        f"options, got {style!r}")
-    for key, value in style.items():
-        if key in TEXT_STYLE_FLAGS:
-            continue
-        if key not in TEXT_STYLE_OPTIONS:
-            raise SpecError(f"{where}: unknown text style option {key!r}. "
-                            f"One of: {', '.join(TEXT_STYLE_OPTIONS)}, "
-                            f"{', '.join(TEXT_STYLE_FLAGS)}")
-        if key in TEXT_STYLE_PATHS:
-            _check_path(value, f"`{key}`", where)
-        elif key in TEXT_STYLE_COLORS:
-            if not isinstance(value, str) or not value.startswith("#"):
-                raise SpecError(f"{where}: text style `{key}` must be a "
-                                f'"#RRGGBB" string, got {value!r}')
-        elif not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise SpecError(f"{where}: text style `{key}` must be a number, "
-                            f"got {value!r}")
-
-
-def _check_mask(mask: Any, track_type: str, where: str) -> None:
-    if track_type != "video":
-        raise SpecError(f"{where}: `mask` only applies to video items, not "
-                        f"{track_type} (it is applied with `capcut mask`, which "
-                        f"needs a visual segment)")
-    slug = mask if isinstance(mask, str) else mask.get("slug") if isinstance(mask, dict) else None
-    if slug not in MASK_SLUGS:
-        raise SpecError(f"{where}: unknown mask {slug!r}. "
-                        f"One of: {', '.join(MASK_SLUGS)}")
-    if not isinstance(mask, dict):
+def _check_cover(cover: Any) -> None:
+    """The draft's thumbnail. A top-level key rather than an item one: it names a
+    frame of the finished edit, not anything on a track."""
+    if cover is None:
         return
-    for key, value in mask.items():
-        if key == "slug" or key in MASK_FLAGS:
+    if isinstance(cover, str):
+        cover = {"path": cover}
+    if not isinstance(cover, dict):
+        raise SpecError(f"spec.cover must be a path or {{path, time}}, got {cover!r}")
+    unknown = set(cover) - {"path", "time"}
+    if unknown:
+        raise SpecError(f"spec.cover: unknown key {sorted(unknown)[0]!r}. "
+                        f"One of: path, time")
+    _check_path(cover.get("path"), "`cover.path`", "spec.cover")
+    time = cover.get("time")
+    if time is not None and (not isinstance(time, (int, float))
+                             or isinstance(time, bool) or time < 0):
+        raise SpecError(f"spec.cover: `time` is seconds into the timeline, "
+                        f"got {time!r}")
+
+
+def _check_item_ops(item: dict, track_type: str, where: str) -> None:
+    """Validate every post-compile item key the item carries.
+
+    Driven by `eyecut.ops.ITEM_OPS`, the same table `apply_item_ops` walks, so a
+    key can never be applicable in one and unknown in the other.
+
+    Applicability is checked here as well as shape, because the CLI behind each
+    key needs the segment kind it was built for: `capcut mask` wants a visual
+    segment, `capcut text-style` a text one. Passed the wrong kind it exits
+    non-zero *after* the draft exists, and nothing downstream re-reads it -- the
+    draft simply opens looking untouched.
+    """
+    for op in ITEM_OPS:
+        value = item.get(op.key)
+        if value is None:
             continue
-        if key not in MASK_OPTIONS:
-            raise SpecError(f"{where}: unknown mask option {key!r}. "
-                            f"One of: {', '.join(MASK_OPTIONS)}, "
-                            f"{', '.join(MASK_FLAGS)}")
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise SpecError(f"{where}: mask `{key}` must be a number, got {value!r}")
+        if track_type not in op.tracks:
+            raise SpecError(
+                f"{where}: `{op.key}` only applies to "
+                f"{' and '.join(op.tracks)} items, not {track_type} — it is "
+                f"applied with `capcut {op.command if isinstance(op.command, str) else op.key}`, "
+                f"which needs that kind of segment")
+        if op.validate is not None:
+            op.validate(value, track_type, where)
+
+
+def _check_compile_fields(item: dict, where: str) -> None:
+    """`opacity` and `rotation` are compile's own item fields, not eyecut's.
+
+    They reach the draft through the compile itself, so there is no CLI call to
+    fail on them -- an out-of-range opacity is simply written verbatim, the way
+    `intensity` is. Checking the shape here is the only place it can be caught.
+    """
+    opacity = item.get("opacity")
+    if opacity is not None:
+        if not isinstance(opacity, (int, float)) or isinstance(opacity, bool):
+            raise SpecError(f"{where}: `opacity` must be a number, got {opacity!r}")
+        if not 0 <= opacity <= 1:
+            raise SpecError(f"{where}: `opacity` {opacity} is outside 0–1. It is "
+                            f"written verbatim, so anything else lands in the draft "
+                            f"as a value the CapCut UI cannot express.")
+    rotation = item.get("rotation")
+    if rotation is not None and (not isinstance(rotation, (int, float))
+                                 or isinstance(rotation, bool)):
+        raise SpecError(f"{where}: `rotation` must be a number of degrees, "
+                        f"got {rotation!r}")
 
 
 def validate_spec(spec: dict[str, Any]) -> None:
@@ -336,18 +262,31 @@ def validate_spec(spec: dict[str, Any]) -> None:
     if not spec.get("tracks"):
         raise SpecError("spec.tracks is required and must hold at least one track")
 
+    if not any(track.get("type", "video") not in TRACK_OPS_BY_TYPE
+               for track in spec["tracks"]):
+        raise SpecError(
+            f"spec.tracks holds only {'/'.join(TRACK_OPS_BY_TYPE)} tracks, which "
+            f"eyecut builds after the compile — compile itself needs at least one "
+            f"video, audio or text track to build a timeline from.")
+    _check_cover(spec.get("cover"))
     _check_overlaps(spec)
     for track_index, track in enumerate(spec.get("tracks") or []):
+        track_type = track.get("type", "video")
+        if track_type not in TRACK_TYPES:
+            raise SpecError(f"tracks[{track_index}]: unknown track type "
+                            f"{track_type!r}. One of: {', '.join(TRACK_TYPES)}")
+        built_here = TRACK_OPS_BY_TYPE.get(track_type)
         for item_index, item in enumerate(track.get("items") or []):
             where = f"tracks[{track_index}].items[{item_index}]"
-            if track.get("type", "video") != "text":
+            if built_here is not None:
+                # compile does not build these tracks, so their items are not
+                # compile's vocabulary either: the op owns the whole shape
+                built_here.validate(item, where)
+                continue
+            if track_type in MEDIA_TRACKS:
                 _check_path(item.get("path"), "`path`", where)
-            if item.get("mask") is not None:
-                _check_mask(item["mask"], track.get("type", "video"), where)
-            if item.get("textStyle") is not None:
-                _check_text_style(item["textStyle"], track.get("type", "video"), where)
-            if item.get("anim") is not None:
-                _check_anim(item["anim"], track.get("type", "video"), where)
+            _check_item_ops(item, track_type, where)
+            _check_compile_fields(item, where)
     refs = _refs(spec)
 
     for index, op in enumerate(spec.get("operations") or []):
