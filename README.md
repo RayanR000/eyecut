@@ -28,7 +28,6 @@ you.
 | `eyecut.media` | Register media in `draft_meta_info.json` so CapCut does not prompt to relink. |
 | `eyecut.frames` | Extract JPEGs and contact sheets from a source, plus what makes it unusable. |
 | `eyecut.shots` | Build a browsable shot picker for a source file. |
-| `eyecut.beatgrid` | Pick cut timings off a song's beat grid, by pinning regions. |
 | `eyecut.proxy` | Render a watchable proxy of a draft without opening CapCut. |
 | `eyecut.speech` | Find spoken lines in footage. |
 | `eyecut.static_server` | Static server with HTTP Range support, so `<video>` can seek. |
