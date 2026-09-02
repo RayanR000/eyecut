@@ -103,7 +103,10 @@ frame beside a cropped clip rendered black rather than a blurred fill, so what
 it does on screen is an open question.
 
 **`mix` and `chroma` do not survive CapCut**, and **`cover` never reaches the
-project list** **[proven failure]** — see below.
+project list** **[proven failure]**. All three are now *refused by
+`validate_spec`* rather than merely documented: each exits 0, lands in the file
+and lints clean, so nothing else in the build would ever tell the user. See
+below.
 
 **Templates — the reuse loop.** Style a title once in CapCut, then apply it
 anywhere: `capcut save-template <project> <segment-id> <name> --out t.json`
@@ -234,7 +237,10 @@ built, so that was not a corner case.
   ```
 
 - **Blend modes and chroma keys are written, then thrown away by the app**
-  **[proven failure, reproduced on two independent drafts]**. `capcut mix-mode`
+  **[proven failure, reproduced on two independent drafts]**. Both are refused by
+  `validate_spec` — `DISCARDED_BY_APP` in `eyecut/spec.py`. Their entries stay in
+  the `ITEM_OPS` table and their shape checks stay written, so the day capcut-cli
+  writes a struct CapCut keeps, deleting two dict entries turns them back on. `capcut mix-mode`
   writes `mix_mode: "Screen"` onto the video *material* (as speed does) and
   `capcut chroma` writes `{type: "chromas", intensity: 0.6}`. Both are present
   and correct in the draft eyecut hands over, in the root file and the timeline
@@ -254,6 +260,9 @@ built, so that was not a corner case.
   which is exactly the evidence SPEC.md says is necessary and not sufficient.
 
 - **`cover` sets a key the project list does not read** **[proven failure]**.
+  Refused by `validate_spec`; `DISCARDED_COVER` in `eyecut/spec.py` carries the
+  reason, and the shape it used to check was `{path, time}` for when the key
+  becomes worth writing again.
   `capcut add-cover` exits 0 and writes `draft_info.cover` with the image path
   and `time_ms`, so nothing in the build reports a problem. But it produces no
   `draft_cover.jpg` in the draft folder and leaves `draft_meta_info.draft_cover`

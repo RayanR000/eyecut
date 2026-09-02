@@ -380,30 +380,6 @@ def text(**item):
         {"text": "TITLE", "start": 0, "duration": 3, **item}]}
 
 
-def test_blend_modes_pass_and_an_invented_one_is_refused():
-    """Unlike the slug catalogues, the 12 blend modes are a closed list: they are
-    written into the draft as an enum rather than looked up in the app's store, so
-    an unknown one is a mistake and not a resource eyecut has not heard of."""
-    validate_spec(spec(video(mix="multiply")))
-    validate_spec(spec(video(mix={"mode": "screen"})))
-    with pytest.raises(SpecError, match="unknown blend mode 'lighter'"):
-        validate_spec(spec(video(mix="lighter")))
-
-
-def test_a_blend_mode_on_a_caption_is_refused():
-    with pytest.raises(SpecError, match="`mix` only applies to video items"):
-        validate_spec(spec(text(mix="multiply")))
-
-
-def test_chroma_needs_a_hex_colour_and_an_intensity_in_range():
-    validate_spec(spec(video(chroma="#00FF00")))
-    validate_spec(spec(video(chroma={"color": "#00FF00", "intensity": 0.7})))
-    with pytest.raises(SpecError, match='chroma `color` must be a "#RRGGBB" string'):
-        validate_spec(spec(video(chroma={"color": "green"})))
-    with pytest.raises(SpecError, match="outside 0–1"):
-        validate_spec(spec(video(chroma={"color": "#00FF00", "intensity": 50})))
-
-
 def test_bg_blur_is_a_level_not_the_fraction_it_stands_for():
     """`capcut bg-blur` takes 1-4, which map to 0.0625 / 0.375 / 0.75 / 1.0.
     Passing the fraction is the natural mistake and gets a level-shaped error only
@@ -506,9 +482,48 @@ def test_an_unknown_track_type_is_named_with_the_ones_that_exist():
         validate_spec(spec(VIDEO, {"type": "subtitle", "items": []}))
 
 
-def test_a_cover_path_must_be_absolute_like_every_other_path():
-    validate_spec({"name": "t", "tracks": [VIDEO], "cover": "/frames/hero.png"})
-    validate_spec({"name": "t", "tracks": [VIDEO],
-                   "cover": {"path": "/frames/hero.png", "time": 2}})
-    with pytest.raises(SpecError, match="must be an absolute path"):
-        validate_spec({"name": "t", "tracks": [VIDEO], "cover": "frames/hero.png"})
+# --- keys the app throws away -------------------------------------------------
+#
+# These three reach the draft, exit 0, and lint clean. `mix` and `chroma` are
+# then discarded the first time CapCut opens and saves the project; `cover`
+# writes a key the project list never reads, so the thumbnail stays black. A
+# build that accepts them reports success for work the user will not get, which
+# is the one thing spec validation exists to prevent.
+
+
+def test_mix_is_refused_because_capcut_discards_it():
+    with pytest.raises(SpecError, match="mix"):
+        validate_spec(spec({"type": "video", "items": [
+            {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+             "mix": "screen"}]}))
+
+
+def test_chroma_is_refused_because_capcut_discards_it():
+    with pytest.raises(SpecError, match="chroma"):
+        validate_spec(spec({"type": "video", "items": [
+            {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+             "chroma": {"color": "#00FF00", "intensity": 0.6}}]}))
+
+
+def test_cover_is_refused_because_the_project_list_ignores_it():
+    s = spec()
+    s["cover"] = {"path": "/tmp/cover.png", "time": 1}
+    with pytest.raises(SpecError, match="cover"):
+        validate_spec(s)
+
+
+def test_the_refusal_says_why_and_not_merely_that_it_is_unknown():
+    """A bare 'unknown key' would send the reader looking for a typo."""
+    with pytest.raises(SpecError) as excinfo:
+        validate_spec(spec({"type": "video", "items": [
+            {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+             "mix": "screen"}]}))
+    assert "discard" in str(excinfo.value).lower()
+
+
+def test_keys_written_in_the_same_pass_still_pass():
+    """The refusal is specific to the three, not a retreat from the coverage."""
+    validate_spec(spec({"type": "video", "items": [
+        {"path": "/footage/a.mp4", "start": 0, "duration": 4,
+         "bgBlur": 3, "crop": {"ratio": "9:16"}, "opacity": 0.5,
+         "rotation": 15}]}))

@@ -618,8 +618,11 @@ def test_a_mask_on_the_base_track_does_not_land_on_the_overlay(tmp_path, drafts_
 
 @capcut_cli
 def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, monkeypatch):
-    """Blend mode, chroma key, background blur and crop, applied against the real
-    CLI.
+    """Background blur and crop, applied against the real CLI.
+
+    `mix` and `chroma` were exercised here too until validation started refusing
+    them: they reach the draft exactly as asserted below and CapCut then throws
+    them away, so a green assertion here was evidence of nothing.
 
     Each is a separate capcut-cli command against a segment id, so what this pins
     is the argv shape: a wrong flag name exits non-zero *after* the draft exists,
@@ -633,7 +636,6 @@ def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, mo
                     "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
     spec = {"name": "eyecut-item-ops", "tracks": [{"type": "video", "items": [
         {"path": str(source), "start": 0, "duration": 4, "sourceStart": 0,
-         "mix": "screen", "chroma": {"color": "#00FF00", "intensity": 0.7},
          "bgBlur": 3, "crop": {"ratio": "9:16"}},
         {"path": str(source), "start": 4, "duration": 4, "sourceStart": 8}]}]}
 
@@ -647,15 +649,6 @@ def test_the_new_item_keys_reach_the_segments_they_name(tmp_path, drafts_dir, mo
     materials = {m["id"]: m for m in built["materials"]["videos"]}
     styled = materials[decorated["material_id"]]
     untouched = materials[plain["material_id"]]
-
-    # the blend mode lives on the MATERIAL, not the segment -- the same shape as
-    # the speed bug, and the reason each segment needs a material of its own
-    assert styled["mix_mode"] == "Screen"
-    assert "mix_mode" not in untouched, "compile writes no blend mode of its own"
-
-    chromas = built["materials"].get("chromas") or []
-    assert len(chromas) == 1, "one chroma key asked for, one written"
-    assert chromas[0]["id"] in decorated["extra_material_refs"]
 
     blurred = [c for c in built["materials"]["canvases"] if c["type"] == "canvas_blur"]
     assert [c["blur"] for c in blurred] == [0.75], "level 3 is 0.75 behind the scenes"
@@ -699,11 +692,14 @@ def test_text_ranges_and_a_bubble_reach_the_caption(tmp_path, drafts_dir, monkey
 
 
 @capcut_cli
-def test_an_sfx_track_and_a_cover_are_built_after_the_compile(tmp_path, drafts_dir,
-                                                              monkeypatch):
+def test_an_sfx_track_is_built_after_the_compile(tmp_path, drafts_dir,
+                                                monkeypatch):
     """compile knows video, audio and text. A sound effect is a catalogue lookup
-    on a track of its own, and the cover is the draft's thumbnail -- neither
-    reachable from a spec before.
+    on a track of its own, not reachable from a spec before.
+
+    A cover was built in the same pass here until validation started refusing it
+    -- `draft_info.cover` was written exactly as asserted, and CapCut's project
+    list read none of it.
 
     These run last because they ADD segments: built earlier they would shift the
     positions every per-segment op matches on. The mask here is the canary --
@@ -714,13 +710,9 @@ def test_an_sfx_track_and_a_cover_are_built_after_the_compile(tmp_path, drafts_d
     subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
                     "testsrc=size=320x240:rate=30:duration=20",
                     "-pix_fmt", "yuv420p", str(source)], capture_output=True, check=True)
-    cover = tmp_path / "cover.png"
-    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x240:d=1",
-                    "-frames:v", "1", str(cover)], capture_output=True, check=True)
     sfx = json.loads(subprocess.run(["capcut", "enums", "--audio-effects"],
                                     capture_output=True, text=True, check=True).stdout)
-    spec = {"name": "eyecut-tracks", "cover": {"path": str(cover), "time": 2},
-            "tracks": [
+    spec = {"name": "eyecut-tracks", "tracks": [
                 {"type": "video", "items": [
                     {"path": str(source), "start": 0, "duration": 6, "sourceStart": 0,
                      "mask": {"slug": "circle", "size": 0.6}}]},
@@ -741,6 +733,3 @@ def test_an_sfx_track_and_a_cover_are_built_after_the_compile(tmp_path, drafts_d
                 for s in t["segments"])
     assert set(clip["extra_material_refs"]) & masked, \
         "the sfx track must not shift what the mask matched"
-
-    assert built["cover"]["path"] == str(cover)
-    assert built["cover"]["time_ms"] == 2000

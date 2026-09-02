@@ -123,11 +123,12 @@ video track compositing over the first. `bgBlur` (a level 1–4), `opacity`,
 draft against the real CLI but have not been seen in CapCut yet — build the
 checklists with `python3 scripts/verify_coverage.py --footage <clip>` and look.
 
-Three are reachable and **useless**, which is worth knowing before you spend a
-draft on them. `mix` (12 blend modes) and `chroma` are written correctly and then
-discarded the first time the project is opened and saved. `cover` writes a key
-CapCut's project list does not read: the thumbnail stays black. SPEC.md has the
-evidence for all three.
+Three are reachable, **useless, and therefore refused**. `mix` (12 blend modes)
+and `chroma` are written correctly and then discarded the first time the project
+is opened and saved; `cover` writes a key CapCut's project list does not read, so
+the thumbnail stays black. `validate_spec` rejects all three with the reason,
+because each one exits 0 and lints clean — a build that accepted them would
+report success for work you will never see. SPEC.md has the evidence.
 
 Still out of reach, because capcut-cli cannot reach them either: fonts
 (`capcut enums --fonts` returns `[]`), store-downloaded assets, speed curves,

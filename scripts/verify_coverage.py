@@ -44,16 +44,14 @@ def _probe_duration(path: Path) -> float:
     return float(out)
 
 
-def _cover_frame(source: Path, at: float, out: Path) -> Path:
-    """A still from the footage, so the cover draft has something real to show."""
-    subprocess.run(["ffmpeg", "-y", "-ss", str(at), "-i", str(source),
-                    "-frames:v", "1", str(out)], capture_output=True, check=True)
-    return out
-
-
 def compositing(source: Path, span: float) -> tuple[dict, list[str]]:
-    """Blend mode, chroma key, background blur, crop, opacity, rotation -- and the
-    two-video-track overlay they mostly exist to serve."""
+    """Background blur, crop, opacity, rotation -- and the two-video-track overlay
+    they mostly exist to serve.
+
+    `mix` and `chroma` were the point of this draft once. Both are now refused by
+    `validate_spec`: they reached the file correctly and CapCut discarded them on
+    the first save.
+    """
     shot = SHOT
     spec = {"name": "eyecut-verify-compositing", "tracks": [
         {"type": "video", "name": "base", "items": [
@@ -64,19 +62,16 @@ def compositing(source: Path, span: float) -> tuple[dict, list[str]]:
              "sourceStart": span / 2, "crop": {"rect": [0.25, 0.25, 0.5, 0.5]}}]},
         {"type": "video", "name": "overlay", "items": [
             {"path": str(source), "start": 0, "duration": shot, "sourceStart": span / 4,
-             "scale": 0.5, "mix": "screen"},
+             "scale": 0.5},
             {"path": str(source), "start": shot, "duration": shot,
              "sourceStart": span / 5, "scale": 0.5, "opacity": 0.4, "rotation": 15},
             {"path": str(source), "start": shot * 2, "duration": shot,
-             "sourceStart": span / 6, "scale": 0.5,
-             "chroma": {"color": "#00FF00", "intensity": 0.6}}]}]}
+             "sourceStart": span / 6, "scale": 0.5}]}]}
     return spec, [
-        "clip 1: the overlay is BRIGHTER where it covers the base (screen blend), "
-        "not simply on top of it",
-        "clip 2: the base is a 9:16 slice with a blurred fill behind it; the "
-        "overlay is see-through and tilted 15 degrees",
-        "clip 3: the base is cropped to its middle quarter; the overlay has any "
-        "green keyed out",
+        "clip 2: the base is a 9:16 slice with a blurred fill behind it -- a "
+        "BLURRED fill, not a black one; the overlay is see-through and tilted "
+        "15 degrees",
+        "clip 3: the base is cropped to its middle quarter",
         "throughout: the overlay sits OVER the base, never appended after it",
     ]
 
@@ -105,20 +100,21 @@ def text(source: Path, span: float) -> tuple[dict, list[str]]:
     ]
 
 
-def tracks(source: Path, span: float, cover: Path) -> tuple[dict, list[str]]:
+def tracks(source: Path, span: float) -> tuple[dict, list[str]]:
     """The tracks compile does not build, and the draft's thumbnail.
 
     No sticker: `add-sticker` takes a raw resource id and there is no
     `capcut enums --stickers` to get one from. Place a sticker by hand, run
     `capcut harvest-enums`, then add it here with its id.
+
+    No cover either, for the opposite reason: it was tried, the thumbnail stayed
+    black, and `validate_spec` now refuses it.
     """
     catalogue = json.loads(subprocess.run(
         ["capcut", "enums", "--audio-effects"],
         capture_output=True, text=True, check=True).stdout)
     slug = catalogue[0]["slug"]
-    spec = {"name": "eyecut-verify-tracks",
-            "cover": {"path": str(cover), "time": 1},
-            "tracks": [
+    spec = {"name": "eyecut-verify-tracks", "tracks": [
                 {"type": "video", "items": [
                     {"path": str(source), "start": 0, "duration": SHOT * 2,
                      "sourceStart": 0}]},
@@ -128,8 +124,6 @@ def tracks(source: Path, span: float, cover: Path) -> tuple[dict, list[str]]:
     return spec, [
         f"an audio track named 'hits' with two {slug} effects, at 1s and 3.5s",
         "the second is audibly quieter than the first",
-        "the draft's thumbnail in the project list is the frame from 1s, not "
-        "the first frame",
     ]
 
 
@@ -176,13 +170,9 @@ def main() -> int:
         parser.error(f"{source.name} is {span:.1f}s; the drafts need ~12s to cut from")
 
     store = (args.drafts or DRAFT_STORE).resolve()
-    scratch = Path(__file__).resolve().parent.parent / "scratch" / "verify"
-    scratch.mkdir(parents=True, exist_ok=True)
-    cover = _cover_frame(source, min(1.0, span / 4), scratch / "cover.png")
-
     builders = {"compositing": lambda: compositing(source, span),
                 "text": lambda: text(source, span),
-                "tracks": lambda: tracks(source, span, cover),
+                "tracks": lambda: tracks(source, span),
                 "regression": lambda: regression(source, span)}
     wanted = args.only or list(builders)
 

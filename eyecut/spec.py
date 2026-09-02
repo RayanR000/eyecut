@@ -48,6 +48,35 @@ FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json"}
 # broken, so the fix is not to do without: the `textStyle` item key above applies
 # the same styling afterwards. Drop this when upstream fixes it -- the test that
 # pins it says the same.
+#: Keys that reach the draft and then come to nothing, mapped to why. Distinct
+#: from `BROKEN_UPSTREAM` below: nothing fails here. The CLI exits 0, the value
+#: lands in the file, `capcut lint` reports it clean, and the tests that assert
+#: against the written draft stay green -- the loss happens later, inside CapCut,
+#: where none of eyecut's evidence reaches. Refusing at validation is the only
+#: point at which the user finds out, and a build that reported success for work
+#: they will never see is the failure this module exists to prevent.
+DISCARDED_BY_APP = {
+    "mix": "CapCut discards blend modes. `capcut mix-mode` writes `mix_mode` "
+           "onto the video material correctly, and the first time the project "
+           "is opened and saved the app strips it from every material "
+           "[proven on two independent drafts]. Layer the tracks and set "
+           "`opacity` instead.",
+    "chroma": "CapCut discards the chroma key, rewriting the entry into its own "
+              "struct with the effect off (`{type: 'none', intensity_value: "
+              "0.0}`) and keeping only the colour [proven]. Key the shot outside "
+              "CapCut, or apply it by hand in the app.",
+}
+
+#: Same class, but a top-level key rather than an item one.
+DISCARDED_COVER = (
+    "CapCut's project list never reads it. `capcut add-cover` exits 0 and writes "
+    "`draft_info.cover`, but produces no `draft_cover.jpg` and leaves "
+    "`draft_meta_info.draft_cover` pointing at a file that does not exist, so the "
+    "thumbnail stays black -- identical to a draft that asked for no cover "
+    "[proven]. Opening the project once lets CapCut generate its own thumbnail, "
+    "which is the only way to get one."
+)
+
 BROKEN_UPSTREAM = {"text-style": "capcut-cli 0.21.1 crashes on it "
                                  "(\"Cannot read properties of undefined (reading 'alpha')\"). "
                                  "Set `textStyle` on the text item instead — the same "
@@ -187,24 +216,18 @@ def _check_span(op: dict, where: str) -> None:
 
 
 def _check_cover(cover: Any) -> None:
-    """The draft's thumbnail. A top-level key rather than an item one: it names a
-    frame of the finished edit, not anything on a track."""
+    """The draft's thumbnail -- refused, because setting it does nothing.
+
+    Kept as a named key with a reason rather than dropped to "unknown key": a
+    spec that asks for a cover is asking for something reasonable, and the reader
+    needs to know the app is what refuses it, not eyecut. If capcut-cli ever
+    learns to write `draft_meta_info.draft_cover` and copy the image into the
+    draft, this becomes a shape check again -- the shape it used to check was
+    `{path, time}`.
+    """
     if cover is None:
         return
-    if isinstance(cover, str):
-        cover = {"path": cover}
-    if not isinstance(cover, dict):
-        raise SpecError(f"spec.cover must be a path or {{path, time}}, got {cover!r}")
-    unknown = set(cover) - {"path", "time"}
-    if unknown:
-        raise SpecError(f"spec.cover: unknown key {sorted(unknown)[0]!r}. "
-                        f"One of: path, time")
-    _check_path(cover.get("path"), "`cover.path`", "spec.cover")
-    time = cover.get("time")
-    if time is not None and (not isinstance(time, (int, float))
-                             or isinstance(time, bool) or time < 0):
-        raise SpecError(f"spec.cover: `time` is seconds into the timeline, "
-                        f"got {time!r}")
+    raise SpecError(f"spec.cover is unusable — {DISCARDED_COVER}")
 
 
 def _check_item_ops(item: dict, track_type: str, where: str) -> None:
@@ -223,6 +246,9 @@ def _check_item_ops(item: dict, track_type: str, where: str) -> None:
         value = item.get(op.key)
         if value is None:
             continue
+        if op.key in DISCARDED_BY_APP:
+            raise SpecError(f"{where}: `{op.key}` is unusable — "
+                            f"{DISCARDED_BY_APP[op.key]}")
         if track_type not in op.tracks:
             raise SpecError(
                 f"{where}: `{op.key}` only applies to "
