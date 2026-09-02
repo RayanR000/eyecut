@@ -96,13 +96,14 @@ the 9:16 slice and the middle-quarter zoom both render), `rotation`, and
 base rather than appended after it.
 
 **Written, reaching the draft, not yet seen** **[untested]**: `bgBlur`,
-`opacity`, `textRanges`, `bubble`, `sticker`, `sfx`, `cover`. Each is confirmed
+`opacity`, `textRanges`, `bubble`, `sticker`, `sfx`. Each is confirmed
 by a test against the real CLI to land in the draft; the app has not confirmed
 any of them. `bgBlur`'s `canvas_blur` material survives a CapCut save, but the
 frame beside a cropped clip rendered black rather than a blurred fill, so what
 it does on screen is an open question.
 
-**`mix` and `chroma` do not survive CapCut** **[proven failure]** — see below.
+**`mix` and `chroma` do not survive CapCut**, and **`cover` never reaches the
+project list** **[proven failure]** — see below.
 
 **Templates — the reuse loop.** Style a title once in CapCut, then apply it
 anywhere: `capcut save-template <project> <segment-id> <name> --out t.json`
@@ -251,6 +252,26 @@ built, so that was not a corner case.
   Found only because the drafts were opened and the files re-read afterwards. The
   test suite is green on both keys — it asserts against the file eyecut wrote,
   which is exactly the evidence SPEC.md says is necessary and not sufficient.
+
+- **`cover` sets a key the project list does not read** **[proven failure]**.
+  `capcut add-cover` exits 0 and writes `draft_info.cover` with the image path
+  and `time_ms`, so nothing in the build reports a problem. But it produces no
+  `draft_cover.jpg` in the draft folder and leaves `draft_meta_info.draft_cover`
+  at the template's default name, pointing at a file that does not exist —
+  **the thumbnail in CapCut's project list stays black, identical to a draft
+  that asked for no cover at all.**
+
+  Two further reasons not to lean on it even if the app is later taught to read
+  the key: the path written is wherever the caller's image happened to live
+  (`verify_coverage.py` leaves it pointing into the repo's `scratch/`), so the
+  reference breaks the moment that file is cleaned up; and nothing copies the
+  image into the draft, so the draft is not self-contained.
+
+  The whole value of `cover` was setting a thumbnail *without* opening the
+  project. It does not do that, and once the project is opened CapCut generates
+  its own thumbnail anyway — which is the state every eyecut draft is already in.
+
+  Found only because the drafts were opened and the files re-read afterwards.
 
   **This is a wrong-shape problem, not a proven dead end.** The entry CapCut
   writes back carries `spill_value`, `edge_smooth_value` and `version` — fields

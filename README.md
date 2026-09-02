@@ -116,12 +116,18 @@ leaves the speed material at 1, and the app reads the material) and **masks**
 and matched to the segment by position, then stamped with the
 `constant_material_id` CapCut gives its own masks and `capcut mask` leaves empty).
 
-And, as of 2026-09-01, everything else capcut-cli 0.21.1 can reach: `mix` (12
-blend modes), `chroma`, `bgBlur` (a level 1–4), `crop` (a ratio or a 0–1 rect),
-`textRanges` (multi-colour text), `bubble`, `opacity` and `rotation`, plus
-`sticker` and `sfx` tracks and a top-level `cover`. These reach the draft against
-the real CLI but have not been seen in CapCut yet — build the four checklists
-with `python3 scripts/verify_coverage.py --footage <clip>` and look.
+And, as of 2026-09-01, everything else capcut-cli 0.21.1 can reach. `crop` (a
+ratio or a 0–1 rect) and `rotation` are confirmed in the app, as is a second
+video track compositing over the first. `bgBlur` (a level 1–4), `opacity`,
+`textRanges` (multi-colour text), `bubble`, and `sticker` / `sfx` tracks reach the
+draft against the real CLI but have not been seen in CapCut yet — build the
+checklists with `python3 scripts/verify_coverage.py --footage <clip>` and look.
+
+Three are reachable and **useless**, which is worth knowing before you spend a
+draft on them. `mix` (12 blend modes) and `chroma` are written correctly and then
+discarded the first time the project is opened and saved. `cover` writes a key
+CapCut's project list does not read: the thumbnail stays black. SPEC.md has the
+evidence for all three.
 
 Still out of reach, because capcut-cli cannot reach them either: fonts
 (`capcut enums --fonts` returns `[]`), store-downloaded assets, speed curves,
@@ -134,12 +140,11 @@ motion tracking, and anything AI-driven in the app.
  "textStyle": {"borderWidth": 0.08, "borderColor": "#000000", "shadow": True},
  "anim": {"intro": "typewriter", "introDuration": 0.6}}
 
-# an overlay that blends rather than covers, over a reframed base
+# an overlay over a reframed base (no `mix` -- CapCut throws blend modes away)
 {"type": "video", "name": "base", "items": [
     {"path": src, "start": 0, "duration": 4, "crop": {"ratio": "9:16"}, "bgBlur": 3}]}
 {"type": "video", "name": "overlay", "items": [
-    {"path": src, "start": 0, "duration": 4, "scale": 0.5, "mix": "screen",
-     "opacity": 0.6}]}
+    {"path": src, "start": 0, "duration": 4, "scale": 0.5, "opacity": 0.6}]}
 ```
 
 `validate_spec` runs before the compile and rejects what compile accepts but
