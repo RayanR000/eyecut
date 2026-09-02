@@ -118,14 +118,17 @@ And, as of 2026-09-02, everything else capcut-cli 0.21.1 can reach — with the
 caveat that reaching the draft and reaching the screen turned out to be different
 things. Confirmed in the app: `crop` (a ratio or a 0–1 rect), `rotation`,
 `textRanges` (multi-colour text), and a second video track compositing over the
-first. Still unconfirmed: `sticker`.
+first.
 
-**Six are refused**, each one written correctly, exiting 0 and linting clean
+**Seven are refused**, each one written correctly, exiting 0 and linting clean
 before doing nothing: `mix` (12 blend modes) and `chroma` are discarded the first
 time CapCut saves; `cover` writes a key the project list never reads; `bgBlur`
 survives the save and draws solid black instead of a blurred fill; an `sfx` track
 survives too and is silent, because the sound is a store asset with no local file.
-`bubble` is refused for the same store reason. `opacity` is the one that took an
+`bubble` and a `sticker` track are refused for the same store reason — a
+sticker's material carries no file at all, only the token
+`##_material_placeholder_<uuid>_##`, and the app badges both segments as
+unresolved and draws neither. `opacity` is the one that took an
 export to catch: `clip.alpha` survives the save *and* shows on the app's own
 Blend slider, and the render is still fully opaque — so there is no layering a
 clip over another at half strength, only cutting between them. `validate_spec` rejects all of them

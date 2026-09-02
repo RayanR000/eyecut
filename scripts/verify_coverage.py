@@ -40,10 +40,6 @@ from eyecut.timeline import DRAFT_STORE  # noqa: E402
 #: clip is visibly different footage.
 SHOT = 3.0
 
-#: the sticker the `stickers` draft places. There is no `capcut enums --stickers`
-#: to look one up in; this id was harvested from a draft where one was placed by
-#: hand. Override with `--sticker-id` when it names an asset this install lacks.
-STICKER_ID = "7137268628230638087"
 
 
 def _probe_duration(path: Path) -> float:
@@ -111,33 +107,6 @@ def text(source: Path, span: float) -> tuple[dict, list[str]]:
     ]
 
 
-def stickers(source: Path, span: float) -> tuple[dict, list[str]]:
-    """The one track eyecut builds that nothing has ever seen on screen.
-
-    A sticker is addressed by raw resource id, not slug, so this draft needs one
-    harvested by hand (`--sticker-id`). The failure it is built to catch is the
-    store-asset failure `sfx` and `bubble` already died of: the segment survives
-    the save and draws nothing, because the id names an asset this install never
-    downloaded. If the sticker is invisible, that is the answer.
-    """
-    shot = SHOT
-    spec = {"name": "eyecut-verify-stickers", "tracks": [
-        {"type": "video", "items": [
-            {"path": str(source), "start": 0, "duration": shot * 2,
-             "sourceStart": 0}]},
-        {"type": "sticker", "name": "stickers", "items": [
-            {"resourceId": STICKER_ID, "start": 0, "duration": shot,
-             "x": 0.5, "y": 0.5},
-            {"resourceId": STICKER_ID, "start": shot, "duration": shot,
-             "x": 0.25, "y": 0.75, "scale": 1.5, "rotation": 30}]}]}
-    return spec, [
-        "sticker 1: visible at all, centred -- an empty frame is the store-asset "
-        "failure, not a placement bug",
-        "sticker 2: moved to the lower left, half again as big, tilted 30 degrees",
-        "both survive a save and re-open of the project",
-    ]
-
-
 def regression(source: Path, span: float) -> tuple[dict, list[str]]:
     """The bug this work started from: a mask on the base of a two-track spec.
 
@@ -168,13 +137,9 @@ def main() -> int:
     parser.add_argument("--suffix", default="",
                         help="append to each draft name, so a rebuild lands "
                              "beside the old one (nothing is ever deleted)")
-    parser.add_argument("--sticker-id", default=STICKER_ID,
-                        help="resource id for the `stickers` draft, from "
-                             "`capcut harvest-enums` on a draft with one placed "
-                             "by hand")
     parser.add_argument("--only", action="append", default=None,
                         help="build one draft by name (compositing/text/"
-                             "stickers/regression); repeatable")
+                             "regression); repeatable")
     args = parser.parse_args()
 
     source = args.footage.resolve()
@@ -185,10 +150,8 @@ def main() -> int:
         parser.error(f"{source.name} is {span:.1f}s; the drafts need ~12s to cut from")
 
     store = (args.drafts or DRAFT_STORE).resolve()
-    globals()["STICKER_ID"] = args.sticker_id
     builders = {"compositing": lambda: compositing(source, span),
                 "text": lambda: text(source, span),
-                "stickers": lambda: stickers(source, span),
                 "regression": lambda: regression(source, span)}
     wanted = args.only or list(builders)
 

@@ -451,22 +451,12 @@ def test_a_spec_of_only_built_after_tracks_leaves_compile_nothing_to_build():
         validate_spec(spec(STICKER))
 
 
-def test_a_sticker_needs_a_resource_id_because_there_is_no_slug_catalogue():
-    """Every other catalogue here is addressed by slug. Stickers are not:
-    `capcut enums` has no --stickers, so the id comes from harvest-enums against a
-    draft where one was placed by hand."""
-    with pytest.raises(SpecError, match="not a slug"):
-        validate_spec(spec(VIDEO, {"type": "sticker", "items": [
-            {"resourceId": "heart", "start": 0, "duration": 2}]}))
-
-
-def test_a_per_segment_key_on_a_sticker_is_refused():
-    """Stickers are created by eyecut, not compile, so they have no compiled
-    segment for a mask to be matched against."""
-    with pytest.raises(SpecError, match="unknown sticker key 'mask'"):
-        validate_spec(spec(VIDEO, {"type": "sticker", "items": [
-            {"resourceId": "7137268628230638087", "start": 0, "duration": 2,
-             "mask": "circle"}]}))
+def test_a_sticker_track_is_refused_because_the_asset_is_never_local():
+    """The track survives the app's save intact -- and draws nothing, because the
+    material's `path` is `##_material_placeholder_<uuid>_##` and there is no file
+    behind the id [proven]. `bubble`'s boundary, reached from the other side."""
+    with pytest.raises(SpecError, match="a `sticker` track is unusable"):
+        validate_spec(spec(VIDEO, STICKER))
 
 
 def test_an_unknown_track_type_is_named_with_the_ones_that_exist():
@@ -531,11 +521,6 @@ def test_the_sfx_refusal_names_the_workaround():
     with pytest.raises(SpecError) as excinfo:
         validate_spec(spec(VIDEO, SFX))
     assert "audio" in str(excinfo.value)
-
-
-def test_a_sticker_track_still_passes():
-    """The refusal is specific to sfx. Stickers are unproven, not disproven."""
-    validate_spec(spec(VIDEO, STICKER))
 
 
 def test_bg_blur_is_refused_because_it_renders_black():

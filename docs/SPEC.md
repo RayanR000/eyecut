@@ -98,14 +98,13 @@ base rather than appended after it. Also confirmed in the app: a mask on the bas
 of a two-video-track spec lands on the base, with the overlay untouched — the
 `(type, track, item)` matcher fix, checked where the files had lied before.
 
-**Written, reaching the draft, not yet seen** **[untested]**: `sticker`.
-Confirmed by a test against the real CLI to land in the draft; the app has not
-confirmed it.
+Nothing is left in the **[untested]** column: every key and track type
+capcut-cli 0.21.1 can reach has now been seen in the app, or measured out of one.
 
-**Six are refused by `validate_spec`** rather than merely documented, because
+**Seven are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
-would ever tell the user: `mix`, `chroma`, `cover`, `bgBlur`, `opacity` and `sfx`
-tracks.
+would ever tell the user: `mix`, `chroma`, `cover`, `bgBlur`, `opacity`, and
+`sticker` and `sfx` tracks.
 `bubble` is refused for a different reason — the store boundary below. Every one
 is a **[proven failure]** with the evidence recorded further down.
 
@@ -332,6 +331,16 @@ built, so that was not a corner case.
   `capcut enums` lists what the catalogue has, not what the local app has. The
   same boundary that makes `add-sticker` need a hand-harvested id. `textStyle`
   gives a caption a background box and works.
+- **A `sticker` track draws nothing** **[proven failure]**. Milder than `sfx` in
+  the file and identical on screen. `capcut add-sticker` writes the material and
+  the track correctly, CapCut keeps both across a save without rewriting a byte,
+  and the segments carry the right timings -- but the sticker material's `path`
+  is the literal token `##_material_placeholder_<uuid>_##`. There is no file, so
+  both segments render as bare video and the app badges each with its
+  unresolved-resource icon. This is `bubble`'s boundary approached from the other
+  side, and it is why hand-harvesting a resource id was never going to be enough:
+  the id resolves to a catalogue entry, and the catalogue is not on disk. Put the
+  graphic on a video track as an image or overlay clip instead.
 - **An `sfx` track cannot make a sound** **[proven failure]**. Two bugs stacked.
   capcut-cli's `add-sfx` pushes its `sound_effect` material into
   `materials.audio_effects` and points the segment's `material_id` at it, but

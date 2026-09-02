@@ -91,6 +91,16 @@ DISCARDED_BY_APP = {
 
 #: Track types in the same class as `DISCARDED_BY_APP`, mapped to why.
 DISCARDED_TRACKS = {
+    "sticker": "a sticker is a store asset. `capcut add-sticker` writes the "
+               "material and the track correctly and CapCut keeps both -- unlike "
+               "`sfx`, nothing is deleted or rewritten on save -- but the "
+               "material's `path` is the literal token "
+               "`##_material_placeholder_<uuid>_##`, meaning no file, and the app "
+               "draws nothing at either segment and badges them with its "
+               "unresolved-resource icon [proven]. The same boundary as `bubble`: "
+               "the id names a catalogue entry this install never downloaded, so "
+               "no id fixes it. Put the graphic on a video track as an image or "
+               "overlay clip, which works.",
     "sfx": "a sound effect names a store resource and `capcut add-sfx` has no "
            "audio file to go with it (`path: \"\"`). eyecut repairs the material "
            "shape so CapCut keeps the track instead of deleting it, but the app "
