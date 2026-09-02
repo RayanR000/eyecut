@@ -29,6 +29,13 @@ from eyecut.draft import write_draft  # noqa: E402
 from eyecut.timeline import DRAFT_STORE  # noqa: E402
 
 
+#: how long each clip in a verification draft runs. Short on purpose: these are
+#: built to be WATCHED, and a checklist of six items is tedious against
+#: two-minute shots. The in-points still spread across the whole source, so each
+#: clip is visibly different footage.
+SHOT = 3.0
+
+
 def _probe_duration(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
@@ -47,7 +54,7 @@ def _cover_frame(source: Path, at: float, out: Path) -> Path:
 def compositing(source: Path, span: float) -> tuple[dict, list[str]]:
     """Blend mode, chroma key, background blur, crop, opacity, rotation -- and the
     two-video-track overlay they mostly exist to serve."""
-    shot = span / 6
+    shot = SHOT
     spec = {"name": "eyecut-verify-compositing", "tracks": [
         {"type": "video", "name": "base", "items": [
             {"path": str(source), "start": 0, "duration": shot, "sourceStart": 0},
@@ -78,15 +85,15 @@ def text(source: Path, span: float) -> tuple[dict, list[str]]:
     """textRanges and bubble, over the textStyle that was already proven."""
     spec = {"name": "eyecut-verify-text", "tracks": [
         {"type": "video", "items": [
-            {"path": str(source), "start": 0, "duration": min(span, 9),
+            {"path": str(source), "start": 0, "duration": SHOT * 3,
              "sourceStart": 0}]},
         {"type": "text", "name": "captions", "items": [
-            {"text": "GOLD and white", "start": 0, "duration": 3, "fontSize": 12,
+            {"text": "GOLD and white", "start": 0, "duration": SHOT, "fontSize": 12,
              "textRanges": [{"start": 0, "end": 4, "font_color": "#FFD700",
                              "bold": True}]},
-            {"text": "in a bubble", "start": 3, "duration": 3, "fontSize": 12,
+            {"text": "in a bubble", "start": SHOT, "duration": SHOT, "fontSize": 12,
              "bubble": "cloud"},
-            {"text": "styled too", "start": 6, "duration": 3, "fontSize": 12,
+            {"text": "styled too", "start": SHOT * 2, "duration": SHOT, "fontSize": 12,
              "bubble": "rounded",
              "textStyle": {"borderWidth": 0.08, "borderColor": "#000000",
                            "shadow": True, "shadowAlpha": 0.6}}]}]}
@@ -113,13 +120,13 @@ def tracks(source: Path, span: float, cover: Path) -> tuple[dict, list[str]]:
             "cover": {"path": str(cover), "time": 1},
             "tracks": [
                 {"type": "video", "items": [
-                    {"path": str(source), "start": 0, "duration": min(span, 8),
+                    {"path": str(source), "start": 0, "duration": SHOT * 2,
                      "sourceStart": 0}]},
                 {"type": "sfx", "name": "hits", "items": [
                     {"slug": slug, "start": 1, "duration": 2, "volume": 0.6},
-                    {"slug": slug, "start": 4, "duration": 2, "volume": 0.3}]}]}
+                    {"slug": slug, "start": 3.5, "duration": 2, "volume": 0.3}]}]}
     return spec, [
-        f"an audio track named 'hits' with two {slug} effects, at 1s and 4s",
+        f"an audio track named 'hits' with two {slug} effects, at 1s and 3.5s",
         "the second is audibly quieter than the first",
         "the draft's thumbnail in the project list is the frame from 1s, not "
         "the first frame",
@@ -133,7 +140,7 @@ def regression(source: Path, span: float) -> tuple[dict, list[str]]:
     silently, since the counts agreed. Worth an eye even though a test covers it,
     because this is the class of failure the files report as clean.
     """
-    shot = min(span, 8)
+    shot = SHOT * 2
     spec = {"name": "eyecut-verify-regression", "tracks": [
         {"type": "video", "name": "base", "items": [
             {"path": str(source), "start": 0, "duration": shot, "sourceStart": 0,
@@ -153,6 +160,9 @@ def main() -> int:
                         help="a video file at least ~12s long")
     parser.add_argument("--drafts", type=Path, default=None,
                         help="drafts store (default: this OS's CapCut store)")
+    parser.add_argument("--suffix", default="",
+                        help="append to each draft name, so a rebuild lands "
+                             "beside the old one (nothing is ever deleted)")
     parser.add_argument("--only", action="append", default=None,
                         help="build one draft by name (compositing/text/tracks/"
                              "regression); repeatable")
@@ -181,6 +191,7 @@ def main() -> int:
         if name not in builders:
             parser.error(f"unknown draft {name!r}. One of: {', '.join(builders)}")
         spec, checklist = builders[name]()
+        spec["name"] += args.suffix
         target = store / spec["name"]
         if target.exists():
             # never delete: an existing draft is the user's, and a half-built one

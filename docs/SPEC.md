@@ -90,12 +90,19 @@ is that compile's vocabulary is the vocabulary, warts and all.
 shapes) · **overlay / picture-in-picture** via a second *named* video track ·
 **captions** from an SRT (one text segment per cue, `sub_type: 1`).
 
-**Complete against capcut-cli 0.21.1** **[untested in the app]**: every remaining
-capability the CLI can reach is now reachable from a spec — `mix` (12 blend
-modes), `chroma`, `bgBlur`, `crop`, `textRanges`, `bubble`, `opacity`,
-`rotation`, plus `sticker` and `sfx` tracks and a top-level `cover`. Each is
-confirmed to reach the draft by a test against the real CLI; none has been seen
-in CapCut yet. Build the four drafts with `scripts/verify_coverage.py` and look.
+**Seen in the app** **[proven]**: `crop` (both a ratio and an explicit rect —
+the 9:16 slice and the middle-quarter zoom both render), `rotation`, and
+**two video tracks compositing simultaneously**, the overlay layered over the
+base rather than appended after it.
+
+**Written, reaching the draft, not yet seen** **[untested]**: `bgBlur`,
+`opacity`, `textRanges`, `bubble`, `sticker`, `sfx`, `cover`. Each is confirmed
+by a test against the real CLI to land in the draft; the app has not confirmed
+any of them. `bgBlur`'s `canvas_blur` material survives a CapCut save, but the
+frame beside a cropped clip rendered black rather than a blurred fill, so what
+it does on screen is an open question.
+
+**`mix` and `chroma` do not survive CapCut** **[proven failure]** — see below.
 
 **Templates — the reuse loop.** Style a title once in CapCut, then apply it
 anywhere: `capcut save-template <project> <segment-id> <name> --out t.json`
@@ -225,10 +232,27 @@ built, so that was not a corner case.
                  "shadow": true, "shadowAlpha": 0.6}}
   ```
 
-- **Blend modes live on the material, not the segment.** `capcut mix-mode` writes
-  `mix_mode` onto the video *material*, exactly as speed does — so a segment
-  needs a material of its own for a blend mode to mean anything. compile gives
-  each segment one, and writes no `mix_mode` of its own **[proven]**.
+- **Blend modes and chroma keys are written, then thrown away by the app**
+  **[proven failure, reproduced on two independent drafts]**. `capcut mix-mode`
+  writes `mix_mode: "Screen"` onto the video *material* (as speed does) and
+  `capcut chroma` writes `{type: "chromas", intensity: 0.6}`. Both are present
+  and correct in the draft eyecut hands over, in the root file and the timeline
+  mirror, and `capcut lint` reports it clean. **Open the draft in CapCut once and
+  save, and `mix_mode` is gone from every material while the chroma entry is
+  rewritten to CapCut's own struct with the effect off** — `{type: "none",
+  intensity_value: 0.0}`, keeping only the colour.
+
+  So these two are reachable on paper and useless in practice: a spec can ask for
+  them, the files say they applied, and the first time the user opens the project
+  the app discards them. The `canvas_blur` from `bgBlur` written in the same pass
+  survives the same save, so this is specific to these two, not a general
+  "CapCut rewrites everything".
+
+  Found only because the drafts were opened and the files re-read afterwards. The
+  test suite is green on both keys — it asserts against the file eyecut wrote,
+  which is exactly the evidence SPEC.md says is necessary and not sufficient.
+  **Not yet reported upstream**, and it is not obviously capcut-cli's bug: it may
+  be writing a shape CapCut 9.x no longer reads.
 
 - **`bgBlur` is a level, not the fraction it stands for.** 1–4 map to 0.0625 /
   0.375 / 0.75 / 1.0. Passing `0.75` is the natural guess and gets a
