@@ -326,6 +326,46 @@ def check_draft(draft_path: Path, spec: dict) -> list[str]:
                             f"materials.transitions (have: "
                             f"{[t.get('name') for t in trans_mats]})")
 
+    # --- textStyle (border, shadow) ---
+    text_mats = {m["id"]: m for m in materials.get("texts", [])}
+    text_tracks = [t for t in data.get("tracks", []) if t.get("type") == "text"]
+    text_segs = [s for t in text_tracks for s in t.get("segments", [])]
+    for track in spec.get("tracks", []):
+        if track.get("type") != "text":
+            continue
+        for item in track.get("items", []):
+            style = item.get("textStyle")
+            if not style:
+                continue
+            label = item.get("text", "?")
+            start_us = round(item["start"] * 1e6)
+            seg = next((s for s in text_segs
+                        if abs(s["target_timerange"]["start"] - start_us) < 1000),
+                       None)
+            if seg is None:
+                failures.append(f"textStyle on '{label}': no matching text segment")
+                continue
+            mat = text_mats.get(seg.get("material_id"))
+            if mat is None:
+                failures.append(f"textStyle on '{label}': text material not found")
+                continue
+            if style.get("borderWidth") and not mat.get("has_border"):
+                failures.append(f"textStyle on '{label}': borderWidth={style['borderWidth']} "
+                                f"but has_border is not set")
+            if style.get("borderColor") and mat.get("border_color", "").lower() != \
+                    style["borderColor"].lower():
+                failures.append(f"textStyle on '{label}': borderColor mismatch — "
+                                f"spec={style['borderColor']}, "
+                                f"draft={mat.get('border_color')}")
+            if style.get("shadow") and not mat.get("has_shadow"):
+                failures.append(f"textStyle on '{label}': shadow=True "
+                                f"but has_shadow is not set")
+            if style.get("shadowAlpha") is not None:
+                draft_alpha = mat.get("shadow_alpha", 0)
+                if abs(draft_alpha - style["shadowAlpha"]) > 0.01:
+                    failures.append(f"textStyle on '{label}': shadowAlpha mismatch — "
+                                    f"spec={style['shadowAlpha']}, draft={draft_alpha}")
+
     return failures
 
 
@@ -383,7 +423,8 @@ def main() -> int:
             for f in json_failures:
                 failed = True
                 print(f"    FAIL {f}")
-        elif any(item.get("anim") for track in spec.get("tracks", [])
+        elif any(item.get("anim") or item.get("textStyle")
+                 for track in spec.get("tracks", [])
                  for item in track.get("items", [])) or \
              any(op["op"] in ("filter", "effect", "transition")
                  for op in spec.get("operations", [])):
