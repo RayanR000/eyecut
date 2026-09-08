@@ -24,6 +24,7 @@ and flat brightness/contrast/saturation keyframes as a global grade.
 Multi-track: when a draft has overlay video tracks, the proxy composites them
 onto the base using Pillow -- with scale, position, rotation, and blend modes
 (multiply, screen, overlay, darken, lighten, soft/hard light, dodge, burn).
+It also applies material-level crop, chroma keying, and text track rendering.
 
 This is an approximation of CapCut's renderer, not CapCut. It has been wrong
 before: a non-uniform `KFTypeScaleX/Y` pair that unfitted clips in CapCut looked
@@ -125,6 +126,104 @@ def _get_blend_mode(seg: dict, effects: list[dict]) -> str | None:
     return None
 
 
+def _get_crop(seg: dict, video_materials: list[dict]) -> dict | None:
+    """Return the crop rect {ulx, uly, lrx, lry} for a segment, or None."""
+    mid = seg.get("material_id")
+    for m in video_materials:
+        if m.get("id") == mid:
+            c = m.get("crop")
+            if not c:
+                return None
+            ulx = c.get("upper_left_x", 0)
+            uly = c.get("upper_left_y", 0)
+            lrx = c.get("lower_right_x", 1)
+            lry = c.get("lower_right_y", 1)
+            if (ulx, uly, lrx, lry) == (0, 0, 1, 1):
+                return None
+            return {"ulx": ulx, "uly": uly, "lrx": lrx, "lry": lry}
+    return None
+
+
+def _apply_chroma(im, seg: dict, chromas: list[dict]):
+    """Apply chroma keying to an RGBA image, making keyed pixels transparent."""
+    refs = set(seg.get("extra_material_refs") or [])
+    chroma = None
+    for c in chromas:
+        if c.get("id") in refs:
+            chroma = c
+            break
+    if chroma is None:
+        return im
+    import numpy as np
+    color_hex = (chroma.get("color") or "")[:7]
+    if len(color_hex) != 7:
+        return im
+    kr, kg, kb = int(color_hex[1:3], 16), int(color_hex[3:5], 16), int(color_hex[5:7], 16)
+    intensity = float(chroma.get("intensity_value") or 0)
+    if intensity <= 0:
+        return im
+    arr = np.asarray(im, dtype=np.float32)
+    rgb = arr[:, :, :3]
+    key = np.array([kr, kg, kb], dtype=np.float32)
+    dist = np.sqrt(np.sum((rgb - key) ** 2, axis=2)) / 441.67  # max dist = sqrt(3*255^2)
+    threshold = 1.0 - intensity
+    alpha = np.clip((dist - threshold) / max(0.3, 1.0 - threshold), 0, 1)
+    result = arr.copy()
+    result[:, :, 3] = alpha * 255
+    from PIL import Image
+    return Image.fromarray(result.astype(np.uint8), "RGBA")
+
+
+def _render_text_overlay(im, t: float, text_tracks: list[dict],
+                         text_materials: dict, width: int, height: int):
+    """Draw active text segments onto the frame."""
+    from PIL import ImageDraw, ImageFont
+    for track in text_tracks:
+        seg = _find_active_seg(track, t)
+        if seg is None:
+            continue
+        mid = seg.get("material_id")
+        mat = text_materials.get(mid)
+        if mat is None:
+            continue
+        try:
+            content = json.loads(mat.get("content") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        text = content.get("text", "")
+        if not text:
+            continue
+        styles = content.get("styles") or []
+        draw = ImageDraw.Draw(im)
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 24)
+            font_bold = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 24)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+            font_bold = font
+
+        # Render each styled range as a separate chunk, left to right
+        x_cursor = None
+        y_pos = height - 60
+        for style in styles:
+            rng = style.get("range", [0, len(text)])
+            chunk = text[rng[0]:rng[1]]
+            if not chunk:
+                continue
+            fill_data = style.get("fill", {}).get("content", {}).get("solid", {})
+            color_arr = fill_data.get("color", [1, 1, 1])
+            r, g, b = [int(c * 255) for c in color_arr[:3]]
+            use_font = font_bold if style.get("bold") else font
+            if x_cursor is None:
+                bbox = draw.textbbox((0, 0), text, font=use_font)
+                total_w = bbox[2] - bbox[0]
+                x_cursor = (width - total_w) // 2
+            draw.text((x_cursor, y_pos), chunk, fill=(r, g, b), font=use_font)
+            bbox = draw.textbbox((0, 0), chunk, font=use_font)
+            x_cursor += bbox[2] - bbox[0]
+    return im
+
+
 def asset_path(draft: Path, material: dict) -> Path | None:
     """Where a material's file actually is, or None if it cannot be found.
 
@@ -202,6 +301,15 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
         raise RuntimeError("draft's video track is empty")
     overlay_tracks = all_track_segs[1:]
     effects = d["materials"].get("effects") or []
+    video_materials = d["materials"].get("videos") or []
+    chromas = d["materials"].get("chromas") or []
+    text_tracks_raw = [t for t in d["tracks"] if t.get("type") == "text"]
+    text_track_segs = []
+    for tt in text_tracks_raw:
+        ts = sorted(tt.get("segments") or [],
+                    key=lambda s: s["target_timerange"]["start"])
+        text_track_segs.append(ts)
+    text_materials = {m["id"]: m for m in (d["materials"].get("texts") or [])}
 
     # --- decode each distinct source once, in parallel ---------------------
     all_segs_flat = [s for ts in all_track_segs for s in ts]
@@ -258,17 +366,22 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
     seqd.mkdir(parents=True)
     total = round(int(d.get("duration") or 0) / 1e6 * fps)
     si, missing = 0, 0
-    need_pil = bool(xform) or bool(overlay_tracks)
+    has_overlays = any(overlay_tracks)
+    has_text = any(text_track_segs)
+    need_pil = bool(xform) or has_overlays or has_text
     if need_pil:
         try:
             from PIL import Image
         except ImportError:
-            raise RuntimeError("this draft has overlays or keyframes that need "
-                               "Pillow to render. pip install pillow")
+            raise RuntimeError("this draft has overlays, text, or keyframes that "
+                               "need Pillow to render. pip install pillow")
 
-    has_overlays = any(overlay_tracks)
     if has_overlays:
         say(f"overlay tracks: {len(overlay_tracks)}")
+    if has_text:
+        say(f"text tracks: {len(text_track_segs)}")
+    if chromas:
+        say(f"chroma materials: {len(chromas)}")
 
     for p in range(total):
         t = p / fps
@@ -281,17 +394,32 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
             continue
         dst = seqd / ("%06d.jpg" % p)
 
-        # Determine if this frame needs Pillow (overlay or base transform)
+        # Determine if this frame needs Pillow
         has_overlay_at_t = False
         if has_overlays:
             for ov_segs in overlay_tracks:
                 if _find_active_seg(ov_segs, t) is not None:
                     has_overlay_at_t = True
                     break
+        has_text_at_t = False
+        if has_text:
+            for tt_segs in text_track_segs:
+                if _find_active_seg(tt_segs, t) is not None:
+                    has_text_at_t = True
+                    break
+        base_crop = _get_crop(s, video_materials)
 
-        if si in xform or has_overlay_at_t:
+        if si in xform or has_overlay_at_t or has_text_at_t or base_crop:
             im = Image.open(src).convert("RGB")
             w, h = im.size
+
+            # Apply material-level crop
+            if base_crop:
+                cx0 = round(w * base_crop["ulx"])
+                cy0 = round(h * base_crop["uly"])
+                cx1 = round(w * base_crop["lrx"])
+                cy1 = round(h * base_crop["lry"])
+                im = im.crop((cx0, cy0, cx1, cy1)).resize((w, h), Image.LANCZOS)
 
             # Apply base track transforms
             if si in xform:
@@ -323,6 +451,19 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
                 if ov_src is None:
                     continue
                 ov_im = Image.open(ov_src).convert("RGBA")
+
+                # Apply crop on overlay material
+                ov_crop = _get_crop(ov_seg, video_materials)
+                if ov_crop:
+                    ow0, oh0 = ov_im.size
+                    ov_im = ov_im.crop((
+                        round(ow0 * ov_crop["ulx"]), round(oh0 * ov_crop["uly"]),
+                        round(ow0 * ov_crop["lrx"]), round(oh0 * ov_crop["lry"])
+                    ))
+
+                # Apply chroma key
+                if chromas:
+                    ov_im = _apply_chroma(ov_im, ov_seg, chromas)
 
                 clip = ov_seg.get("clip") or {}
                 sx = clip.get("scale", {}).get("x", 1.0)
@@ -356,6 +497,11 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
                     im = Image.composite(blended, im, mask)
                 else:
                     im.paste(ov_im, (px, py), ov_im if ov_im.mode == "RGBA" else None)
+
+            # Render text tracks
+            if has_text_at_t:
+                im = _render_text_overlay(im, t, text_track_segs,
+                                          text_materials, w, h)
 
             im.save(dst, quality=88)
             continue
