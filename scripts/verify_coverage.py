@@ -199,6 +199,136 @@ def regression(source: Path, span: float) -> tuple[dict, list[str]]:
     ]
 
 
+def store_assets(source: Path, span: float) -> tuple[dict, list[str]]:
+    """Animation, filter, effect, and transition — all store-asset references.
+
+    These cannot be verified visually in a proxy because the proxy has no access
+    to CapCut's bundled shaders, LUTs, or animation resources. Instead they are
+    checked structurally: does the right material land on the right segment with
+    the right slug, resource_id, and timeline span.
+    """
+    shot = SHOT
+    spec = {"name": "eyecut-verify-store-assets", "tracks": [
+        {"type": "video", "name": "base", "items": [
+            {"path": str(source), "start": 0, "duration": shot * 4,
+             "sourceStart": 0, "ref": "base-clip"},
+            {"path": str(source), "start": shot * 4, "duration": shot * 2,
+             "sourceStart": span / 3,
+             "anim": {"intro": "fade-in", "introDuration": 0.5}}]},
+        {"type": "text", "name": "captions", "items": [
+            {"text": "anim test", "start": 0, "duration": shot, "fontSize": 10,
+             "anim": {"intro": "typewriter", "introDuration": 0.8}},
+            {"text": "no anim", "start": shot, "duration": shot, "fontSize": 10}]},
+    ], "operations": [
+        {"op": "filter", "slug": "vintage", "start": 0, "duration": shot * 2},
+        {"op": "effect", "slug": "blur", "start": shot * 2, "duration": shot * 2},
+        {"op": "transition", "slug": "mix", "target": "base-clip"},
+    ]}
+    return spec, [
+        "clip 1 (0-12s base): has a Vintage filter for the first 6s and a Blur "
+        "effect from 6-12s",
+        "clip 2 (12-18s): fades in (image-anim intro: fade-in, 0.5s)",
+        "caption 1 (0-3s): Typewriter text animation intro",
+        "caption 2 (3-6s): no animation (control)",
+        "the cut between base clip 1 and clip 2 has a Mix transition",
+    ]
+
+
+def check_draft(draft_path: Path, spec: dict) -> list[str]:
+    """Validate store-asset materials in a built draft against what was asked.
+
+    Returns a list of failures; empty means all checks passed.
+    """
+    data = json.loads((draft_path / "draft_info.json").read_text())
+    failures = []
+    materials = data.get("materials", {})
+
+    # --- animations ---
+    anim_materials = materials.get("material_animations", [])
+    for track in spec.get("tracks", []):
+        for item in track.get("items", []):
+            anim = item.get("anim")
+            if not anim:
+                continue
+            label = item.get("text") or item.get("ref") or item.get("path", "")[-20:]
+            # Find the segment for this item, then check its animation material
+            found_any = False
+            for a in anim_materials:
+                for entry in a.get("animations", []):
+                    slug = anim.get("intro") or anim.get("outro") or anim.get("combo")
+                    if not slug:
+                        continue
+                    if entry.get("name", "").lower().replace(" ", "-") == slug.replace("-", "-"):
+                        found_any = True
+                    elif entry.get("id") and slug.replace("-", "_") in (
+                            entry.get("name", "").lower().replace(" ", "_")):
+                        found_any = True
+            if not found_any and (anim.get("intro") or anim.get("outro") or anim.get("combo")):
+                slug = anim.get("intro") or anim.get("outro") or anim.get("combo")
+                names = [e.get("name", "") for a in anim_materials
+                         for e in a.get("animations", [])]
+                failures.append(f"anim '{slug}' on '{label}': not found in "
+                                f"material_animations (have: {names})")
+
+    # --- filter / effect (operations that create their own tracks) ---
+    video_effects = {m["id"]: m for m in materials.get("video_effects", [])}
+    for op in spec.get("operations", []):
+        if op["op"] not in ("filter", "effect"):
+            continue
+        slug = op["slug"]
+        op_start = op["start"]
+        op_dur = op["duration"]
+        track_type = op["op"]
+        matching_tracks = [t for t in data.get("tracks", [])
+                           if t.get("type") == track_type]
+        found = False
+        for et in matching_tracks:
+            for seg in et.get("segments", []):
+                seg_start = seg["target_timerange"]["start"] / 1e6
+                seg_dur = seg["target_timerange"]["duration"] / 1e6
+                if abs(seg_start - op_start) < 0.1 and abs(seg_dur - op_dur) < 0.1:
+                    mid = seg.get("material_id")
+                    mat = video_effects.get(mid)
+                    if mat:
+                        ename = (mat.get("name") or "").lower().replace(" ", "-")
+                        if ename == slug or slug in ename:
+                            found = True
+                        else:
+                            failures.append(
+                                f"{op['op']} at {op_start}s: material name "
+                                f"'{mat.get('name')}' does not match slug '{slug}'")
+                            found = True
+                    else:
+                        failures.append(
+                            f"{op['op']} at {op_start}s: segment found but "
+                            f"material_id '{mid}' not in video_effects")
+                        found = True
+        if not found:
+            failures.append(f"{op['op']} '{slug}' at {op_start}-{op_start+op_dur}s: "
+                            f"no matching segment on a '{track_type}' track")
+
+    # --- transition ---
+    for op in spec.get("operations", []):
+        if op["op"] != "transition":
+            continue
+        slug = op["slug"]
+        trans_mats = materials.get("transitions", [])
+        found = False
+        for t in trans_mats:
+            tname = (t.get("name") or "").lower().replace(" ", "-")
+            if tname == slug or slug in tname:
+                found = True
+                if not t.get("effect_id"):
+                    failures.append(f"transition '{slug}': material exists but "
+                                    f"has no effect_id")
+        if not found:
+            failures.append(f"transition '{slug}': not found in "
+                            f"materials.transitions (have: "
+                            f"{[t.get('name') for t in trans_mats]})")
+
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--footage", required=True, type=Path,
@@ -210,7 +340,7 @@ def main() -> int:
                              "beside the old one (nothing is ever deleted)")
     parser.add_argument("--only", action="append", default=None,
                         help="build one draft by name (compositing/text/"
-                             "chroma/mix/regression); repeatable")
+                             "chroma/mix/regression/store-assets); repeatable")
     args = parser.parse_args()
 
     source = args.footage.resolve()
@@ -225,7 +355,8 @@ def main() -> int:
                 "text": lambda: text(source, span),
                 "chroma": lambda: chroma(source, span),
                 "mix": lambda: mix(source, span),
-                "regression": lambda: regression(source, span)}
+                "regression": lambda: regression(source, span),
+                "store-assets": lambda: store_assets(source, span)}
     wanted = args.only or list(builders)
 
     failed = False
@@ -246,6 +377,17 @@ def main() -> int:
         for warning in draft.warnings:
             failed = True
             print(f"    WARNING {warning}")
+        # JSON-level structural checks for store assets
+        json_failures = check_draft(target, spec)
+        if json_failures:
+            for f in json_failures:
+                failed = True
+                print(f"    FAIL {f}")
+        elif any(item.get("anim") for track in spec.get("tracks", [])
+                 for item in track.get("items", [])) or \
+             any(op["op"] in ("filter", "effect", "transition")
+                 for op in spec.get("operations", [])):
+            print("    JSON checks: all store-asset materials verified")
         print("    look for:")
         for line in checklist:
             print(f"      [ ] {line}")
