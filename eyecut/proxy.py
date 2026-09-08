@@ -21,6 +21,10 @@ It also reproduces the treatments `eyecut.timeline` can write -- `KFTypeScale` a
 a centre crop-zoom, `KFTypePositionX/Y` as shake, `KFTypeAlpha` pairs as fades,
 and flat brightness/contrast/saturation keyframes as a global grade.
 
+Multi-track: when a draft has overlay video tracks, the proxy composites them
+onto the base using Pillow -- with scale, position, rotation, and blend modes
+(multiply, screen, overlay, darken, lighten, soft/hard light, dodge, burn).
+
 This is an approximation of CapCut's renderer, not CapCut. It has been wrong
 before: a non-uniform `KFTypeScaleX/Y` pair that unfitted clips in CapCut looked
 perfectly fine here. Treat a disagreement between the two as the proxy's fault
@@ -46,6 +50,79 @@ W, H = 854, 480
 # Keyframe properties this renderer understands. CapCut misspells some of its own
 # names (KFTypeHightLight, KFTypeLightSensatione); these four are spelled normally.
 XFORM_KEYS = ("KFTypeScale", "KFTypePositionX", "KFTypePositionY", "KFTypeBrightness")
+
+
+def _blend_pil(base, overlay, mode: str):
+    """Composite overlay onto base using a named blend mode via Pillow."""
+    from PIL import ImageChops
+    if mode == "multiply":
+        return ImageChops.multiply(base, overlay)
+    if mode == "screen":
+        return ImageChops.screen(base, overlay)
+    if mode in ("darken", "color-burn"):
+        return ImageChops.darker(base, overlay)
+    if mode in ("lighten", "color-dodge"):
+        return ImageChops.lighter(base, overlay)
+    if mode == "overlay":
+        # 2 * a * b if b < 0.5, else 1 - 2*(1-a)*(1-b)
+        import numpy as np
+        a = np.asarray(base, dtype=np.float32) / 255
+        b = np.asarray(overlay, dtype=np.float32) / 255
+        r = np.where(b < 0.5, 2 * a * b, 1 - 2 * (1 - a) * (1 - b))
+        from PIL import Image
+        return Image.fromarray((np.clip(r, 0, 1) * 255).astype(np.uint8))
+    if mode == "soft-light":
+        import numpy as np
+        a = np.asarray(base, dtype=np.float32) / 255
+        b = np.asarray(overlay, dtype=np.float32) / 255
+        r = np.where(b < 0.5, a - (1 - 2*b) * a * (1 - a),
+                     a + (2*b - 1) * (np.sqrt(a) - a))
+        from PIL import Image
+        return Image.fromarray((np.clip(r, 0, 1) * 255).astype(np.uint8))
+    if mode == "hard-light":
+        import numpy as np
+        a = np.asarray(base, dtype=np.float32) / 255
+        b = np.asarray(overlay, dtype=np.float32) / 255
+        r = np.where(b < 0.5, 2 * a * b, 1 - 2 * (1 - a) * (1 - b))
+        from PIL import Image
+        return Image.fromarray((np.clip(r, 0, 1) * 255).astype(np.uint8))
+    return overlay
+
+
+def _find_active_seg(segs: list[dict], t: float) -> dict | None:
+    """Return the segment active at time t (seconds), or None."""
+    for s in segs:
+        start = s["target_timerange"]["start"] / 1e6
+        dur = s["target_timerange"]["duration"] / 1e6
+        if start <= t < start + dur:
+            return s
+    return None
+
+
+def _seg_source_frame(seg: dict, t: float, name_map: dict, src_fps: dict,
+                      tmp: Path) -> Path | None:
+    """Return the decoded JPEG path for a segment at timeline time t."""
+    f = name_map[seg["material_id"]]
+    tl = seg["target_timerange"]["start"] / 1e6
+    speed = seg["source_timerange"]["duration"] / seg["target_timerange"]["duration"]
+    st = seg["source_timerange"]["start"] / 1e6 + (t - tl) * speed
+    idx = int(round(st * src_fps[f])) + 1
+    src = tmp / f.replace(".", "_") / ("%06d.jpg" % idx)
+    if not src.exists():
+        src = tmp / f.replace(".", "_") / ("%06d.jpg" % max(1, idx - 1))
+    return src if src.exists() else None
+
+
+def _get_blend_mode(seg: dict, effects: list[dict]) -> str | None:
+    """Return the blend mode name for a segment, or None."""
+    refs = set(seg.get("extra_material_refs") or [])
+    for e in effects:
+        if e.get("id") in refs and e.get("type") == "mix_mode":
+            raw = (e.get("name") or "").lower().replace(" ", "-")
+            if raw == "brighten":
+                raw = "lighten"
+            return raw if raw != "normal" else None
+    return None
 
 
 def asset_path(draft: Path, material: dict) -> Path | None:
@@ -115,13 +192,20 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
     video_tracks = [t for t in d["tracks"] if t.get("type") == "video"]
     if not video_tracks:
         raise RuntimeError("draft has no video track")
-    segs = sorted(video_tracks[0]["segments"],
-                  key=lambda s: s["target_timerange"]["start"])
+    all_track_segs = []
+    for vt in video_tracks:
+        ts = sorted(vt.get("segments") or [],
+                    key=lambda s: s["target_timerange"]["start"])
+        all_track_segs.append(ts)
+    segs = all_track_segs[0]
     if not segs:
         raise RuntimeError("draft's video track is empty")
+    overlay_tracks = all_track_segs[1:]
+    effects = d["materials"].get("effects") or []
 
     # --- decode each distinct source once, in parallel ---------------------
-    files = sorted({name[s["material_id"]] for s in segs})
+    all_segs_flat = [s for ts in all_track_segs for s in ts]
+    files = sorted({name[s["material_id"]] for s in all_segs_flat})
     src_fps: dict[str, float] = {}
     jobs = []
     for f in files:
@@ -174,55 +258,108 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
     seqd.mkdir(parents=True)
     total = round(int(d.get("duration") or 0) / 1e6 * fps)
     si, missing = 0, 0
-    need_pil = bool(xform)
+    need_pil = bool(xform) or bool(overlay_tracks)
     if need_pil:
         try:
             from PIL import Image
         except ImportError:
-            raise RuntimeError("this draft has scale/shake/flash keyframes, which need "
+            raise RuntimeError("this draft has overlays or keyframes that need "
                                "Pillow to render. pip install pillow")
+
+    has_overlays = any(overlay_tracks)
+    if has_overlays:
+        say(f"overlay tracks: {len(overlay_tracks)}")
 
     for p in range(total):
         t = p / fps
         while si + 1 < len(segs) and segs[si + 1]["target_timerange"]["start"] / 1e6 <= t:
             si += 1
         s = segs[si]
-        f = name[s["material_id"]]
-        tl = s["target_timerange"]["start"] / 1e6
-        speed = s["source_timerange"]["duration"] / s["target_timerange"]["duration"]
-        st = s["source_timerange"]["start"] / 1e6 + (t - tl) * speed
-        idx = int(round(st * src_fps[f])) + 1
-        src = tmp / f.replace(".", "_") / ("%06d.jpg" % idx)
-        if not src.exists():
-            src = tmp / f.replace(".", "_") / ("%06d.jpg" % max(1, idx - 1))
-            if not src.exists():
-                missing += 1
-                continue
+        src = _seg_source_frame(s, t, name, src_fps, tmp)
+        if src is None:
+            missing += 1
+            continue
         dst = seqd / ("%06d.jpg" % p)
 
-        if si in xform:
-            base, tr = xform[si]
-            rel = t - base
-            z = _sample(tr["KFTypeScale"], rel) if "KFTypeScale" in tr else 1.0
-            dx = _sample(tr["KFTypePositionX"], rel) if "KFTypePositionX" in tr else 0.0
-            dy = _sample(tr["KFTypePositionY"], rel) if "KFTypePositionY" in tr else 0.0
-            white = 0.0
-            if "KFTypeBrightness" in tr:
-                bt = tr["KFTypeBrightness"]
-                white = max(0.0, min(1.0, _sample(bt, rel) - min(v for _, v in bt)))
-            if z != 1.0 or dx or dy or white:
-                im = Image.open(src)
-                w, h = im.size
-                z = max(z, 1.0 + 2 * max(abs(dx), abs(dy)))   # keep shake in frame
-                cw, ch = w / z, h / z
-                cx = min(max(0, (w - cw) / 2 - dx * w), w - cw)
-                cy = min(max(0, (h - ch) / 2 + dy * h), h - ch)
-                im = im.crop((round(cx), round(cy), round(cx + cw), round(cy + ch)))
-                im = im.resize((w, h), Image.LANCZOS)
-                if white:
-                    im = Image.blend(im, Image.new("RGB", im.size, (255, 255, 255)), white)
-                im.save(dst, quality=88)
-                continue
+        # Determine if this frame needs Pillow (overlay or base transform)
+        has_overlay_at_t = False
+        if has_overlays:
+            for ov_segs in overlay_tracks:
+                if _find_active_seg(ov_segs, t) is not None:
+                    has_overlay_at_t = True
+                    break
+
+        if si in xform or has_overlay_at_t:
+            im = Image.open(src).convert("RGB")
+            w, h = im.size
+
+            # Apply base track transforms
+            if si in xform:
+                base_t, tr = xform[si]
+                rel = t - base_t
+                z = _sample(tr["KFTypeScale"], rel) if "KFTypeScale" in tr else 1.0
+                dx = _sample(tr["KFTypePositionX"], rel) if "KFTypePositionX" in tr else 0.0
+                dy = _sample(tr["KFTypePositionY"], rel) if "KFTypePositionY" in tr else 0.0
+                white = 0.0
+                if "KFTypeBrightness" in tr:
+                    bt = tr["KFTypeBrightness"]
+                    white = max(0.0, min(1.0, _sample(bt, rel) - min(v for _, v in bt)))
+                if z != 1.0 or dx or dy or white:
+                    z = max(z, 1.0 + 2 * max(abs(dx), abs(dy)))
+                    cw, ch = w / z, h / z
+                    cx = min(max(0, (w - cw) / 2 - dx * w), w - cw)
+                    cy = min(max(0, (h - ch) / 2 + dy * h), h - ch)
+                    im = im.crop((round(cx), round(cy), round(cx + cw), round(cy + ch)))
+                    im = im.resize((w, h), Image.LANCZOS)
+                    if white:
+                        im = Image.blend(im, Image.new("RGB", im.size, (255, 255, 255)), white)
+
+            # Composite overlay tracks
+            for ov_segs in overlay_tracks:
+                ov_seg = _find_active_seg(ov_segs, t)
+                if ov_seg is None:
+                    continue
+                ov_src = _seg_source_frame(ov_seg, t, name, src_fps, tmp)
+                if ov_src is None:
+                    continue
+                ov_im = Image.open(ov_src).convert("RGBA")
+
+                clip = ov_seg.get("clip") or {}
+                sx = clip.get("scale", {}).get("x", 1.0)
+                sy = clip.get("scale", {}).get("y", 1.0)
+                ox = clip.get("transform", {}).get("x", 0.0)
+                oy = clip.get("transform", {}).get("y", 0.0)
+                rot = clip.get("rotation", 0)
+
+                ow = round(w * sx)
+                oh = round(h * sy)
+                if ow < 1 or oh < 1:
+                    continue
+                ov_im = ov_im.resize((ow, oh), Image.LANCZOS)
+                if rot:
+                    ov_im = ov_im.rotate(-rot, expand=True, resample=Image.BICUBIC)
+
+                blend_mode = _get_blend_mode(ov_seg, effects)
+
+                px = round((w - ov_im.width) / 2 + ox * w)
+                py = round((h - ov_im.height) / 2 - oy * h)
+
+                if blend_mode:
+                    # Blend mode: composite the overlapping region
+                    canvas = Image.new("RGB", (w, h), (0, 0, 0))
+                    canvas.paste(ov_im.convert("RGB"), (px, py))
+                    mask = Image.new("L", (w, h), 0)
+                    ov_alpha = ov_im.split()[3] if ov_im.mode == "RGBA" else \
+                        Image.new("L", ov_im.size, 255)
+                    mask.paste(ov_alpha, (px, py))
+                    blended = _blend_pil(im, canvas, blend_mode)
+                    im = Image.composite(blended, im, mask)
+                else:
+                    im.paste(ov_im, (px, py), ov_im if ov_im.mode == "RGBA" else None)
+
+            im.save(dst, quality=88)
+            continue
+
         try:
             os.link(src, dst)
         except OSError:
