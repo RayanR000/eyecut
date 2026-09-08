@@ -30,8 +30,11 @@ KEYFRAME_PROPERTIES = ("position_x", "position_y", "rotation", "scale_x", "scale
 # dist/decorators.js EASING_PROFILES, plus "linear". Hyphens, not underscores.
 EASINGS = ("linear", "ease-in", "ease-out", "ease-in-out")
 # dist/compile.js, the op whitelist
-OPERATIONS = ("transition", "filter", "effect", "keyframe", "audio-fade",
-              "text-style", "text-ranges", "template", "captions")
+COMPILE_OPS = ("transition", "filter", "effect", "keyframe", "audio-fade",
+               "text-style", "text-ranges", "template", "captions")
+# post-compile ops: executed by eyecut after compile, not passed to the compiler
+POST_OPS = ("caption", "import-ass", "tts")
+OPERATIONS = COMPILE_OPS + POST_OPS
 # these carry a `target` that must name a declared item ref
 TARGETED = ("transition", "keyframe", "audio-fade", "text-style", "text-ranges")
 # ops that only mean anything on an audio segment
@@ -40,7 +43,8 @@ AUDIO_ONLY = ("audio-fade",)
 # `duration` + `slug`, and no target. They get a track of their own in the draft.
 SPANNING = ("filter", "effect")
 # ops that name a file of their own rather than a declared item
-FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json"}
+FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json",
+            "import-ass": "an .ass/.ssa subtitle file"}
 
 # `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
 # "Cannot read properties of undefined (reading 'alpha')". Refused here with an
@@ -228,6 +232,32 @@ def _check_file_op(op: dict, where: str) -> None:
             raise SpecError(f"{where}: `duration` must be > 0")
 
 
+def _check_caption(op: dict, where: str) -> None:
+    """Whisper transcription added post-compile."""
+    audio = op.get("audio")
+    from_seg = op.get("fromSegment")
+    if not audio and not from_seg:
+        raise SpecError(f"{where}: `caption` needs `audio` (path to an audio/video "
+                        f"file) or `fromSegment` (a segment ref to transcribe from)")
+    if audio:
+        _check_path(audio, "`audio`", where)
+
+
+def _check_tts(op: dict, where: str) -> None:
+    """Text-to-speech voiceover added post-compile."""
+    if not isinstance(op.get("text"), str) or not op["text"]:
+        raise SpecError(f"{where}: `tts` needs `text` (the voiceover text)")
+    if not isinstance(op.get("ttsCmd"), str) or not op["ttsCmd"]:
+        raise SpecError(f"{where}: `tts` needs `ttsCmd` (command template with {{out}})")
+    if "{out}" not in op["ttsCmd"]:
+        raise SpecError(f"{where}: `ttsCmd` must contain {{out}} — the placeholder "
+                        f"where the synthesized audio file will be written")
+    for field in ("start", "duration"):
+        value = op.get(field)
+        if value is not None and not isinstance(value, (int, float)):
+            raise SpecError(f"{where}: `{field}` must be a number (seconds)")
+
+
 def _check_span(op: dict, where: str) -> None:
     """`filter` and `effect` cover a timeline range. Every field here is one
     compile accepts missing or out of range, writing something that never
@@ -392,3 +422,7 @@ def validate_spec(spec: dict[str, Any]) -> None:
             _check_span(op, where)
         if name == "keyframe":
             _check_keyframe(op, where)
+        if name == "caption":
+            _check_caption(op, where)
+        if name == "tts":
+            _check_tts(op, where)

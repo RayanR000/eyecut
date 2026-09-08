@@ -24,7 +24,7 @@ from eyecut.media import (MediaProbe, Registration, groups_of, probe,
                           register_media, set_timeline_duration,
                           timeline_duration_us, write_meta)
 from eyecut.ops import ITEM_OPS, TRACK_OPS_BY_TYPE
-from eyecut.spec import validate_spec
+from eyecut.spec import POST_OPS, validate_spec
 from eyecut.template import find_template
 
 
@@ -152,6 +152,7 @@ def write_draft(spec: dict, project_dir: Path | str, probes: list[MediaProbe],
     warnings += apply_track_ops(spec, project_dir, runner=runner, store=store)
     # and immediately after, because `add-sfx` writes a segment CapCut deletes
     repair_sfx_materials(project_dir)
+    warnings += apply_post_ops(spec, project_dir, runner=runner, store=store)
     warnings += apply_cover(spec, project_dir, runner=runner, store=store)
     mirror_timeline(project_dir)
     meta_path = project_dir / "draft_meta_info.json"
@@ -267,6 +268,11 @@ def _compile_spec(spec: dict) -> dict:
     trimmed = {key: value for key, value in spec.items() if key != "cover"}
     trimmed["tracks"] = [track for track in spec.get("tracks") or []
                          if track.get("type", "video") not in TRACK_OPS_BY_TYPE]
+    if trimmed.get("operations"):
+        trimmed["operations"] = [op for op in trimmed["operations"]
+                                 if op.get("op") not in POST_OPS]
+        if not trimmed["operations"]:
+            del trimmed["operations"]
     return trimmed
 
 
@@ -444,6 +450,71 @@ def apply_animations(spec: dict, project_dir: Path, *, runner=_capcut_runner,
         if code != 0:
             warnings.append(f"anim on {_where(where)} failed: "
                             f"{stderr.strip()[:120]}")
+    return warnings
+
+
+def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
+                   store: Path | None = None) -> list[str]:
+    """Execute post-compile operations: caption, import-ass, tts.
+
+    These are CLI commands that modify an existing draft — compile has no
+    vocabulary for them. They run after all item and track ops, because they
+    may add segments that would confuse position-based matching.
+    """
+    ops = [op for op in spec.get("operations") or [] if op.get("op") in POST_OPS]
+    if not ops:
+        return []
+    store = store or project_dir.parent
+    warnings: list[str] = []
+    for i, op in enumerate(ops):
+        name = op["op"]
+        where = f"post-op[{i}] ({name})"
+        if name == "caption":
+            argv = ["capcut", "caption", str(project_dir)]
+            if op.get("audio"):
+                argv += ["--audio", str(op["audio"])]
+            if op.get("fromSegment"):
+                argv += ["--from-segment", str(op["fromSegment"])]
+            for key, flag in (("whisperCmd", "--whisper-cmd"),
+                              ("whisperModel", "--whisper-model"),
+                              ("whisperEngine", "--whisper-engine"),
+                              ("language", "--language"),
+                              ("maxWords", "--max-words"),
+                              ("trackName", "--track-name")):
+                if op.get(key) is not None:
+                    argv += [flag, str(op[key])]
+            if op.get("karaoke"):
+                argv.append("--karaoke")
+            code, stderr = runner(argv, store)
+            if code != 0:
+                warnings.append(f"{where} failed: {stderr.strip()[:120]}")
+
+        elif name == "import-ass":
+            argv = ["capcut", "import-ass", str(project_dir), str(op["path"])]
+            for key, flag in (("trackName", "--track-name"),
+                              ("fontSize", "--font-size"),
+                              ("color", "--color")):
+                if op.get(key) is not None:
+                    argv += [flag, str(op[key])]
+            code, stderr = runner(argv, store)
+            if code != 0:
+                warnings.append(f"{where} failed: {stderr.strip()[:120]}")
+
+        elif name == "tts":
+            argv = ["capcut", "tts", str(project_dir)]
+            if op.get("start") is not None:
+                argv.append(str(op["start"]))
+            if op.get("duration") is not None:
+                argv.append(str(op["duration"]))
+            argv += ["--text", op["text"], "--tts-cmd", op["ttsCmd"]]
+            for key, flag in (("volume", "--volume"),
+                              ("trackName", "--track-name")):
+                if op.get(key) is not None:
+                    argv += [flag, str(op[key])]
+            code, stderr = runner(argv, store)
+            if code != 0:
+                warnings.append(f"{where} failed: {stderr.strip()[:120]}")
+
     return warnings
 
 
