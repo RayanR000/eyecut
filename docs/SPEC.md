@@ -90,7 +90,9 @@ is that compile's vocabulary is the vocabulary, warts and all.
 `volume`, `scale`, `x`/`y`, `fontSize`, `color`, `sourceStart` · `transition` ·
 `filter` · `effect` · `keyframe` on 11 properties · `audio-fade` ·
 **overlay / picture-in-picture** via a second *named* video track ·
-**captions** from an SRT (one text segment per cue, `sub_type: 1`) · **blend
+**captions** from an SRT (one text segment per cue, `sub_type: 1`) ·
+**`import-ass`** (an `.ass`/`.ssa` file, inline styling carried, but as plain
+text — see below) · **blend
 modes** (all nine shipped shaders named back by the app's Blend panel, and
 surviving the save) · **`cover`** (the image appears in the project list without
 the draft ever being opened).
@@ -109,22 +111,71 @@ of a two-video-track spec lands on the base, with the overlay untouched — the
 that confirms is *placement*, which is all it ever claimed; the mask still does
 not draw.
 
-Nothing is left in the **[untested]** column except the three post-compile
-operations below: every other key and track type capcut-cli 0.21.1 can reach has
-now been seen in the app, or measured out of one.
+Nothing is left in the **[untested]** column except the app half of the three
+post-compile operations below: every other key and track type capcut-cli 0.21.1
+can reach has now been seen in the app, or measured out of one.
 
-**Post-compile operations** **[untested]** — added 2026-09-08, run against
-neither the real CLI nor the app yet. They are spec `operations`, not item keys:
-validated in `eyecut.spec`, stripped from the spec compile sees, and executed in
-`write_draft` (`apply_post_ops`) after the track ops, before media registration.
+**Post-compile operations** — added 2026-09-08, run against the real CLI but
+not yet opened in CapCut, so none carries a **[proven]** marker. They are spec
+`operations`, not item keys: validated in `eyecut.spec`, stripped from the spec
+compile sees, and executed in `write_draft` (`apply_post_ops`) after the track
+ops, before media registration. What a draft built with each one holds, read off
+the files with `capcut lint` clean in all three cases:
 `caption` transcribes via `capcut caption` (needs `audio`, an absolute path, or
-`fromSegment`; whisper model/engine, language, karaoke and max-words options).
+`fromSegment`, a spec ref to an audio item, resolved to the built segment id
+after the compile; whisper model/engine, language, karaoke and max-words
+options) and writes real `sub_type: 1` caption segments at the cue timings.
 `import-ass` imports an ASS/SSA file via `capcut import-ass` (needs `path`,
-absolute; track name, font size and colour options). `tts` synthesises a
-voiceover via `capcut tts` (needs `text` plus a `ttsCmd` template containing
-`{out}`; start/duration, volume and track-name options). No draft built with any
-of the three has been opened in CapCut, so none carries a **[proven]** marker —
-that is the one place this document currently describes code nobody has watched.
+absolute; track name, font size and colour options) as one text segment per
+Dialogue on a `subtitle` track, seeding the size from the file's `[V4+ Styles]`
+line and turning inline overrides (`{\b1}`) into per-range styles. `tts`
+synthesises a voiceover via `capcut tts` (needs `text` plus a `ttsCmd` template
+containing `{out}`; start/duration, volume and track-name options) straight into
+`assets/audio/voiceover.wav`, as an `extract_music` audio material with the same
+companions and render index as compile's own audio segments — registered in
+`draft_materials` like any other timeline media, mirrored to the Timelines
+folder, and lint-clean, which is the file-level answer to whether the audio
+survives: it is on exactly the same footing as compiled audio, and there is no
+second save-shape the way `sfx` had.
+Two things the CLI run caught. `fromSegment` used to reach the CLI as the ref
+itself, which `capcut caption` cannot resolve ("Segment not found") — the draft
+built with a warning and no captions, the silent-no-op shape. It is validated
+against declared refs (audio tracks only) and resolved to the built id. And a
+`duration` with no `start` used to be read by the CLI as the start; it now
+starts at 0. Unmapped CLI flags (`--style-ref`, `--preset`, `--time-offset`...)
+are refused rather than dropped: accepting one would build success around work
+the draft does not contain.
+
+**`import-ass` renders, as text and not as captions** **[proven]**. Both lines of
+a two-line `.ass` appear at their stated times with the inline `{\b1}` bold
+carried through — but the segments come back from the save as `sub_type: 0`, the
+plain-text value, where the `captions` op's are `1`. So the track is named
+`subtitle` and the source file is a subtitle format, and what lands is still an
+ordinary pair of text layers: absent from the Captions panel, and with none of
+the bulk restyle or subtitle re-export that a caption set gets. Both suggest
+otherwise, which is the reason to write it down.
+
+**A thin material is not a broken one.** `import-ass` writes 15 keys where
+`captions` writes 126 — no `font_path`, no `sub_type`, none of the background,
+border or shadow blocks — and the file-level reading of that was that it could
+not render. It renders: CapCut fills every default on load and writes all 126
+back on quit. That was the fourth time file evidence has been misread in this
+project in this direction, and the first outside masks. It stays the rule that
+the app is the standard. The one real consequence is that the healed material
+exists only after a first open, so a draft handed straight to another tool still
+carries the stub.
+
+What no file can answer is the app half of the other two: for `tts` that means
+watching the voiceover survive a save, for `caption` a transcription by a real
+whisper binary (none is installed here; the pipeline ran against a stub that
+emits fixed cues, and without any binary the op fails as a warning with the
+draft otherwise intact).
+Two practical notes from the runs. The CLI help's macOS example,
+`say -o {out} {text}`, fails on the `.wav` path it is given (`Opening output
+file failed: fmt?`); `say -o {out} --file-format=WAVE --data-format=LEI16 {text}`
+writes it. And `caption` without whisper installed is the one op whose failure
+is environmental rather than textual — worth a `capcut doctor` before blaming
+the spec.
 
 **Five are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
@@ -241,8 +292,11 @@ of it: `caption`, `import-ass` and `tts` are whole-spec *operations*, not
 per-segment item keys, so `eyecut.draft.apply_post_ops` maps each one to its
 `capcut` argv directly instead of walking `eyecut.ops`. The one-table invariant
 — applicable in one place means known in the other — does not cover them; their
-shape checks live in `eyecut.spec` (`_check_caption`, `_check_tts`, and the
-`FILE_OPS` entry for `import-ass`). All three are **[untested]** (see above).
+shape checks live in `eyecut.spec` (`_check_caption`, `_check_tts`, the
+`FILE_OPS` entry for `import-ass`, and the `POST_OP_KEYS` allow-list each of
+them is checked against, so an unmapped CLI flag fails validation instead of
+vanishing between the spec and the argv). `fromSegment` is resolved from ref to
+built segment id at apply time, the way the item ops match by position.
 
 ### What `write_draft` repairs after the compile
 

@@ -240,6 +240,55 @@ def test_captions_take_an_srt_path():
     validate_spec(spec(operations=[{"op": "captions", "path": "/subs/cues.srt"}]))
 
 
+def test_a_caption_from_an_audio_ref_passes():
+    """`fromSegment` is a spec ref, resolved to the built segment id after the
+    compile -- the ids do not exist until then, so there is nothing else the
+    caller could name."""
+    validate_spec(spec(VIDEO, AUDIO, operations=[
+        {"op": "caption", "fromSegment": "bed", "whisperCmd": "whisper"}]))
+
+
+def test_a_caption_from_an_unknown_ref_is_refused():
+    """Passed straight through, the CLI fails it *after* the draft exists
+    ("Segment not found") and the draft opens with no captions."""
+    with pytest.raises(SpecError, match="not a declared item `ref`"):
+        validate_spec(spec(VIDEO, AUDIO, operations=[
+            {"op": "caption", "fromSegment": "nosuch", "whisperCmd": "whisper"}]))
+
+
+def test_a_caption_from_a_video_ref_is_refused():
+    """`capcut caption --from-segment` reads only audio segments; a video ref
+    fails after the draft exists."""
+    with pytest.raises(SpecError, match="only transcribe an audio segment"):
+        validate_spec(spec(VIDEO, AUDIO, operations=[
+            {"op": "caption", "fromSegment": "shot0", "whisperCmd": "whisper"}]))
+
+
+def test_an_unmapped_post_op_key_is_refused_rather_than_dropped():
+    """The CLI takes more flags than eyecut maps (`--style-ref`, `--preset`,
+    `--time-offset`...). Accepting one would be the silent no-op this module
+    exists to prevent: the draft would build, lint clean, and open looking
+    exactly like one nobody asked to change."""
+    with pytest.raises(SpecError, match="unknown `caption` key 'styleRef'"):
+        validate_spec(spec(operations=[
+            {"op": "caption", "audio": "/m/a.wav", "styleRef": "abc"}]))
+    with pytest.raises(SpecError, match="unknown `tts` key 'voice'"):
+        validate_spec(spec(operations=[
+            {"op": "tts", "text": "hi", "ttsCmd": "cmd {out}", "voice": "amy"}]))
+    with pytest.raises(SpecError, match="unknown `import-ass` key 'timeOffset'"):
+        validate_spec(spec(operations=[
+            {"op": "import-ass", "path": "/s/a.ass", "timeOffset": 1}]))
+
+
+def test_a_tts_volume_outside_0_to_1_is_refused():
+    """Written verbatim otherwise, the same class as `intensity`."""
+    validate_spec(spec(operations=[
+        {"op": "tts", "text": "hi", "ttsCmd": "cmd {out}", "volume": 0.8}]))
+    with pytest.raises(SpecError, match="outside 0"):
+        validate_spec(spec(operations=[
+            {"op": "tts", "text": "hi", "ttsCmd": "cmd {out}", "volume": 2}]))
+
+
 def test_a_relative_media_path_is_refused_because_the_spec_moves():
     """compile resolves a relative path against the spec file, and eyecut writes the
     spec into the drafts store -- so `footage/a.mp4` resolves inside

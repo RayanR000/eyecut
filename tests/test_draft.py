@@ -14,7 +14,7 @@ import pytest
 
 from eyecut.draft import (AFTER_HOOKS, CHECK_FLAG_BLEND, CHECK_FLAG_CHROMA, CHROMA_PATH,
                           CompileError, MIX_MODE_NAME_IDS, _mix_mode_catalogue,
-                          repair_chroma_materials, repair_mix_modes,
+                          apply_post_ops, repair_chroma_materials, repair_mix_modes,
                           repair_sfx_materials, write_draft)
 from eyecut.media import MediaProbe
 
@@ -942,3 +942,86 @@ def test_after_hooks_run_once_all_the_cli_calls_are_done():
         f"every CLI call must come before the first hook, got {timeline}"
     hooks = [name for kind, name in timeline if kind == "hook"]
     assert len(set(hooks)) == len(hooks), "a hook re-run is wasted work at best"
+
+
+# --- post-compile operations -------------------------------------------------
+#
+# `caption`, `import-ass` and `tts` are whole-spec operations mapped to `capcut`
+# argv in `apply_post_ops`. These pin the two argv shapes a wrong value breaks
+# silently: the ref-to-id resolution the CLI needs, and the tts positionals.
+
+AUDIO_DRAFT = {"tracks": [{"type": "audio", "segments": [{"id": "SEG-UUID"}]}],
+               "materials": {}}
+
+
+def _audio_spec(**op):
+    return {"tracks": [
+        {"type": "video", "items": [
+            {"path": "/f/a.mp4", "start": 0, "duration": 4}]},
+        {"type": "audio", "items": [
+            {"path": "/m/bed.wav", "start": 0, "duration": 4, "ref": "bed"}]}],
+        "operations": [dict({"op": "caption", "fromSegment": "bed",
+                             "whisperCmd": "whisper"}, **op)]}
+
+
+def test_a_caption_ref_reaches_the_cli_as_the_built_segment_id(tmp_path):
+    """`fromSegment` is a spec ref; the CLI takes a segment id, which exists
+    only after the compile. Passed through verbatim the CLI fails it after the
+    draft exists ("Segment not found") and the draft opens with no captions --
+    found exactly that way, against the real CLI."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "draft_info.json").write_text(json.dumps(AUDIO_DRAFT))
+
+    calls = []
+    warnings = apply_post_ops(
+        _audio_spec(), project,
+        runner=lambda argv, cwd: (calls.append(argv) or (0, "")),
+        store=project)
+
+    assert warnings == []
+    assert calls[0][:3] == ["capcut", "caption", str(project)]
+    assert "--from-segment" in calls[0]
+    assert calls[0][calls[0].index("--from-segment") + 1] == "SEG-UUID"
+
+
+def test_a_caption_ref_with_no_built_segment_is_skipped_loudly(tmp_path):
+    """The counts-disagree rule from the item ops, applied to the one op that
+    names an item: skip with a warning naming the ref, never guess."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "draft_info.json").write_text(
+        json.dumps({"tracks": [], "materials": {}}))
+
+    calls = []
+    warnings = apply_post_ops(
+        _audio_spec(), project,
+        runner=lambda argv, cwd: (calls.append(argv) or (0, "")),
+        store=project)
+
+    assert calls == []
+    assert len(warnings) == 1 and "bed" in warnings[0]
+
+
+def test_a_tts_duration_without_a_start_starts_at_zero(tmp_path):
+    """The CLI takes [start] [duration] positionally: a bare duration would be
+    read as the start, voicing over the wrong stretch of timeline."""
+    calls = []
+    apply_post_ops(
+        {"operations": [{"op": "tts", "text": "hi", "ttsCmd": "cmd {out}",
+                         "duration": 3}]},
+        tmp_path, runner=lambda argv, cwd: (calls.append(argv) or (0, "")),
+        store=tmp_path)
+
+    assert calls[0][3:5] == ["0", "3"]
+
+
+def test_a_tts_start_and_duration_keep_their_order(tmp_path):
+    calls = []
+    apply_post_ops(
+        {"operations": [{"op": "tts", "text": "hi", "ttsCmd": "cmd {out}",
+                         "start": 2, "duration": 3}]},
+        tmp_path, runner=lambda argv, cwd: (calls.append(argv) or (0, "")),
+        store=tmp_path)
+
+    assert calls[0][3:5] == ["2", "3"]

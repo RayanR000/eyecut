@@ -453,6 +453,27 @@ def apply_animations(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     return warnings
 
 
+def _ref_positions(spec: dict) -> dict[str, tuple[str, int, int]]:
+    """Item `ref` -> the (track type, track ordinal, item index) coordinates
+    `_segment_ids` keys its segment ids on.
+
+    The ordinal counts tracks of the same type the way `_segment_ids` counts
+    the built ones, so a ref resolves to the segment compile made for it --
+    the same position matching the item ops use, for the one post-compile op
+    that names an item instead of carrying its own file or text.
+    """
+    seen: dict[str, int] = {}
+    positions = {}
+    for track in spec.get("tracks") or []:
+        track_type = track.get("type", "video")
+        ordinal = seen.get(track_type, 0)
+        seen[track_type] = ordinal + 1
+        for index, item in enumerate(track.get("items") or []):
+            if isinstance(item, dict) and item.get("ref"):
+                positions[item["ref"]] = (track_type, ordinal, index)
+    return positions
+
+
 def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
                    store: Path | None = None) -> list[str]:
     """Execute post-compile operations: caption, import-ass, tts.
@@ -466,6 +487,7 @@ def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
         return []
     store = store or project_dir.parent
     warnings: list[str] = []
+    segments = None  # resolved once, and only if a caption names a segment
     for i, op in enumerate(ops):
         name = op["op"]
         where = f"post-op[{i}] ({name})"
@@ -474,7 +496,15 @@ def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
             if op.get("audio"):
                 argv += ["--audio", str(op["audio"])]
             if op.get("fromSegment"):
-                argv += ["--from-segment", str(op["fromSegment"])]
+                if segments is None:
+                    segments = _segment_ids(project_dir)
+                segment_id = segments.get(_ref_positions(spec).get(op["fromSegment"],
+                                                                  ("", -1, -1)))
+                if segment_id is None:
+                    warnings.append(f"{where} skipped: compile produced no "
+                                    f"segment for ref {op['fromSegment']!r}")
+                    continue
+                argv += ["--from-segment", segment_id]
             for key, flag in (("whisperCmd", "--whisper-cmd"),
                               ("whisperModel", "--whisper-model"),
                               ("whisperEngine", "--whisper-engine"),
@@ -502,10 +532,14 @@ def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
 
         elif name == "tts":
             argv = ["capcut", "tts", str(project_dir)]
+            # positionals are [start] [duration]: a duration with no start
+            # would otherwise be read as the start.
             if op.get("start") is not None:
                 argv.append(str(op["start"]))
-            if op.get("duration") is not None:
-                argv.append(str(op["duration"]))
+                if op.get("duration") is not None:
+                    argv.append(str(op["duration"]))
+            elif op.get("duration") is not None:
+                argv += ["0", str(op["duration"])]
             argv += ["--text", op["text"], "--tts-cmd", op["ttsCmd"]]
             for key, flag in (("volume", "--volume"),
                               ("trackName", "--track-name")):
