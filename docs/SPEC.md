@@ -26,7 +26,19 @@ times; the user's judgment was the necessary signal **[proven]**.
 - **Not an editing pipeline.** No `scan`, no `arrange`, no shot-description
   database. Claude has vision; batching frames through a separate model to produce
   descriptions Claude then reads is a reimplementation of Claude as a cron job.
-- Not a renderer. CapCut renders; eyecut writes the project.
+- **Not a renderer.** CapCut renders; eyecut writes the project. `eyecut.proxy`
+  is the one exception and stays one: it answers *is the timeline right* — which
+  shot, in what order, for how long, framed how — for edits too dense for
+  CapCut's own preview to scrub. It gets a feature only when the absence makes
+  the timeline unreadable (an overlay that does not composite reads as a missing
+  clip; text that does not draw reads as a gap), never when the feature only
+  changes how a frame looks. Filters, effects, transitions, animations, masks and
+  store assets are deliberately absent, and a proxy render is never evidence
+  about CapCut — it shows what eyecut wrote, not what the app does with it. The
+  rule is written out at the top of `eyecut/proxy.py`; without it this becomes a
+  second compositor that must track everything `eyecut.draft` can write, forever,
+  with CapCut as its only oracle — and if you are opening CapCut anyway, the
+  proxy has not saved you the trip.
 - Not a CapCut draft library. `capcut-cli` does that well and eyecut depends on it.
 
 ---

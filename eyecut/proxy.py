@@ -30,6 +30,31 @@ This is an approximation of CapCut's renderer, not CapCut. It has been wrong
 before: a non-uniform `KFTypeScaleX/Y` pair that unfitted clips in CapCut looked
 perfectly fine here. Treat a disagreement between the two as the proxy's fault
 and check the real app.
+
+Where it stops
+--------------
+The proxy answers one question -- **is the timeline right?** Which shot, in what
+order, for how long, framed how. It is a scrubbing aid for edits too dense for
+CapCut's own preview, and every feature here has to earn its place against that
+sentence, because the alternative is reimplementing CapCut's compositor one
+plausible commit at a time. Compositing, crop, blend modes and text all got in on
+that argument; the argument does not extend indefinitely.
+
+* **Build it** when its absence makes the timeline unreadable -- an overlay that
+  does not composite reads as a missing clip, text that does not draw reads as a
+  gap. You cannot judge the cut through the hole.
+* **Do not build it** when it only changes how a frame *looks* and the cut is
+  legible without it. Filters, effects, transitions, animation presets, masks and
+  store assets are all deliberately absent. A grade being wrong here costs
+  nothing; a clip being in the wrong place costs the edit.
+* **Never** treat the proxy as evidence about CapCut. It cannot prove a feature
+  works, only that eyecut wrote what it meant to write. The app is the standard,
+  and file-level and proxy-level readings have both been wrong before.
+
+The failure mode this rule exists to prevent is a second renderer that has to be
+kept in step with everything `eyecut.draft` can write, forever, with no test that
+can tell you when it has fallen behind -- because the only oracle is CapCut, and
+if you are opening CapCut anyway the proxy did not save you the trip.
 """
 from __future__ import annotations
 
