@@ -9,7 +9,6 @@ dependencies = ["mcp>=2.0", "numpy>=1.26", "pillow>=10"]
 eyecut = "eyecut.server:main"
 eyecut-frames = "eyecut.frames:main"
 eyecut-proxy = "eyecut.proxy:main"
-eyecut-speech = "eyecut.speech:main"
 
 [build-system]
 requires = ["setuptools>=68"]

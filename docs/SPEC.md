@@ -36,8 +36,7 @@ times; the user's judgment was the necessary signal **[proven]**.
 **Two tools.** The test a tool has to pass is not "is it useful" but **"can Claude
 do it another way?"** Claude runs in a shell. Frame extraction, shot browsing and
 proxy rendering are a few lines of ffmpeg away, so they are CLIs
-(`eyecut-frames`, `eyecut-shots`, `eyecut-proxy`, `eyecut-serve`,
-`eyecut-speech`), not tools. Writing CapCut's format correctly is the thing no
+(`eyecut-frames`, `eyecut-shots`, `eyecut-proxy`, `eyecut-serve`), not tools. Writing CapCut's format correctly is the thing no
 shell gets you.
 
 `tests/test_server.py` asserts the surface is *exactly* these two, so adding a
@@ -606,6 +605,17 @@ music, not about CapCut.** eyecut's one differentiator is writing a format nobod
 else writes; a beat detector belongs in the build scripts where it already lives,
 or in a tool of its own. The same test that cut it also cut `extract_frames` from
 the MCP surface.
+
+**`speech` — voice-activity detection.** Scored every 25ms frame of a source on
+three signals (voice-band energy ratio, spectral flatness, level above the file's
+own 40th-percentile noise floor) and merged the runs, on plain `wave` and numpy
+so it needed neither scipy nor librosa. It worked. It is cut by the same test
+that cut `music_grid` and, later, the `caption` and `tts` ops: **it is about
+audio, not about CapCut.** Finding a spoken line is a signal-processing job any
+shell can do; writing the format is not. Being a CLI rather than an MCP tool was
+not enough of a defence — `caption` was reachable that way too and went anyway.
+Removed 2026-09-08; the implementation is in git history if the argument comes
+back.
 
 **`extract_frames`, `browse_shots`, `preview` as MCP tools.** Built, tested, and
 moved to CLIs. Claude has a shell; a tool that wraps five lines of ffmpeg is

@@ -28,7 +28,6 @@ you.
 | `eyecut.media` | Register media in `draft_meta_info.json` so CapCut does not prompt to relink. |
 | `eyecut.frames` | Extract JPEGs and contact sheets from a source, plus what makes it unusable. |
 | `eyecut.proxy` | Render a watchable proxy of a draft without opening CapCut. |
-| `eyecut.speech` | Find spoken lines in footage. |
 | `eyecut.template` / `probe` | Supporting pieces for the above. |
 
 ## The rules `timeline` enforces
@@ -206,7 +205,6 @@ spec = {"name": "MY_PROJECT", "tracks": [
 
 ```bash
 eyecut-proxy MY_PROJECT -o preview.mp4
-eyecut-speech FOOTAGE.mp4 --windows shots.txt
 ```
 
 ## What is deliberately *not* here
