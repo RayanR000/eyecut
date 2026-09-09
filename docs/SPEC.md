@@ -130,8 +130,8 @@ can reach has now been seen in the app, or measured out of one.
 `operations`, not item keys: validated in `eyecut.spec`, stripped from the spec
 compile sees, and executed in `write_draft` (`apply_post_ops`) after the track
 ops, before media registration. `import-ass` is the only one, and imports an ASS/SSA file via
-`capcut import-ass` (needs `path`, absolute; track name, font size and colour
-options) as one text segment per Dialogue on a `subtitle` track, seeding the
+`capcut import-ass` (needs `path`, absolute; track name, font size, colour and
+time offset options) as one text segment per Dialogue on a `subtitle` track, seeding the
 size from the file's `[V4+ Styles]` line and turning inline overrides (`{\b1}`)
 into per-range styles.
 
@@ -145,7 +145,7 @@ is small on purpose. `eyecut.spec.OUT_OF_SCOPE` refuses both **by name**, with
 the replacement route in the message — falling through to "unknown op" would
 read as a typo to the one person who most needs the recipe.
 
-Unmapped CLI flags (`--time-offset`...) are refused rather than dropped:
+Unmapped CLI flags (`--style-ref`...) are refused rather than dropped:
 accepting one would build success around work the draft does not contain.
 
 **`import-ass` renders, as text and not as captions** **[proven]**. Both lines of
