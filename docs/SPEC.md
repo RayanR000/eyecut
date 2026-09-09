@@ -115,36 +115,27 @@ Nothing is left in the **[untested]** column except the app half of the three
 post-compile operations below: every other key and track type capcut-cli 0.21.1
 can reach has now been seen in the app, or measured out of one.
 
-**Post-compile operations** — added 2026-09-08, run against the real CLI but
-not yet opened in CapCut, so none carries a **[proven]** marker. They are spec
+**Post-compile operations** — added 2026-09-08, and seen in the app. They are spec
 `operations`, not item keys: validated in `eyecut.spec`, stripped from the spec
 compile sees, and executed in `write_draft` (`apply_post_ops`) after the track
-ops, before media registration. What a draft built with each one holds, read off
-the files with `capcut lint` clean in all three cases:
-`caption` transcribes via `capcut caption` (needs `audio`, an absolute path, or
-`fromSegment`, a spec ref to an audio item, resolved to the built segment id
-after the compile; whisper model/engine, language, karaoke and max-words
-options) and writes real `sub_type: 1` caption segments at the cue timings.
-`import-ass` imports an ASS/SSA file via `capcut import-ass` (needs `path`,
-absolute; track name, font size and colour options) as one text segment per
-Dialogue on a `subtitle` track, seeding the size from the file's `[V4+ Styles]`
-line and turning inline overrides (`{\b1}`) into per-range styles. `tts`
-synthesises a voiceover via `capcut tts` (needs `text` plus a `ttsCmd` template
-containing `{out}`; start/duration, volume and track-name options) straight into
-`assets/audio/voiceover.wav`, as an `extract_music` audio material with the same
-companions and render index as compile's own audio segments — registered in
-`draft_materials` like any other timeline media, mirrored to the Timelines
-folder, and lint-clean, which is the file-level answer to whether the audio
-survives: it is on exactly the same footing as compiled audio, and there is no
-second save-shape the way `sfx` had.
-Two things the CLI run caught. `fromSegment` used to reach the CLI as the ref
-itself, which `capcut caption` cannot resolve ("Segment not found") — the draft
-built with a warning and no captions, the silent-no-op shape. It is validated
-against declared refs (audio tracks only) and resolved to the built id. And a
-`duration` with no `start` used to be read by the CLI as the start; it now
-starts at 0. Unmapped CLI flags (`--style-ref`, `--preset`, `--time-offset`...)
-are refused rather than dropped: accepting one would build success around work
-the draft does not contain.
+ops, before media registration. `import-ass` is the only one, and imports an ASS/SSA file via
+`capcut import-ass` (needs `path`, absolute; track name, font size and colour
+options) as one text segment per Dialogue on a `subtitle` track, seeding the
+size from the file's `[V4+ Styles]` line and turning inline overrides (`{\b1}`)
+into per-range styles.
+
+**`caption` and `tts` were here and are cut** — not because they failed. Both
+worked. `caption` wrapped a whisper binary and `tts` wrapped `say`, and neither
+is CapCut's format: the format half of each already had a supported route, an
+`.srt` through the proven `captions` op and a wav on an ordinary `audio` track,
+and Claude has a shell to produce either. That is the same test that cut beat
+detection for being about music rather than about CapCut, and the surface here
+is small on purpose. `eyecut.spec.OUT_OF_SCOPE` refuses both **by name**, with
+the replacement route in the message — falling through to "unknown op" would
+read as a typo to the one person who most needs the recipe.
+
+Unmapped CLI flags (`--time-offset`...) are refused rather than dropped:
+accepting one would build success around work the draft does not contain.
 
 **`import-ass` renders, as text and not as captions** **[proven]**. Both lines of
 a two-line `.ass` appear at their stated times with the inline `{\b1}` bold
@@ -164,18 +155,6 @@ project in this direction, and the first outside masks. It stays the rule that
 the app is the standard. The one real consequence is that the healed material
 exists only after a first open, so a draft handed straight to another tool still
 carries the stub.
-
-What no file can answer is the app half of the other two: for `tts` that means
-watching the voiceover survive a save, for `caption` a transcription by a real
-whisper binary (none is installed here; the pipeline ran against a stub that
-emits fixed cues, and without any binary the op fails as a warning with the
-draft otherwise intact).
-Two practical notes from the runs. The CLI help's macOS example,
-`say -o {out} {text}`, fails on the `.wav` path it is given (`Opening output
-file failed: fmt?`); `say -o {out} --file-format=WAVE --data-format=LEI16 {text}`
-writes it. And `caption` without whisper installed is the one op whose failure
-is environmental rather than textual — worth a `capcut doctor` before blaming
-the spec.
 
 **Five are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build

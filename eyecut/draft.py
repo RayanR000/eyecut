@@ -453,102 +453,33 @@ def apply_animations(spec: dict, project_dir: Path, *, runner=_capcut_runner,
     return warnings
 
 
-def _ref_positions(spec: dict) -> dict[str, tuple[str, int, int]]:
-    """Item `ref` -> the (track type, track ordinal, item index) coordinates
-    `_segment_ids` keys its segment ids on.
-
-    The ordinal counts tracks of the same type the way `_segment_ids` counts
-    the built ones, so a ref resolves to the segment compile made for it --
-    the same position matching the item ops use, for the one post-compile op
-    that names an item instead of carrying its own file or text.
-    """
-    seen: dict[str, int] = {}
-    positions = {}
-    for track in spec.get("tracks") or []:
-        track_type = track.get("type", "video")
-        ordinal = seen.get(track_type, 0)
-        seen[track_type] = ordinal + 1
-        for index, item in enumerate(track.get("items") or []):
-            if isinstance(item, dict) and item.get("ref"):
-                positions[item["ref"]] = (track_type, ordinal, index)
-    return positions
-
-
 def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
                    store: Path | None = None) -> list[str]:
-    """Execute post-compile operations: caption, import-ass, tts.
+    """Execute post-compile operations. `import-ass` is the only one.
 
-    These are CLI commands that modify an existing draft — compile has no
+    These are CLI commands that modify an existing draft -- compile has no
     vocabulary for them. They run after all item and track ops, because they
     may add segments that would confuse position-based matching.
+
+    `caption` and `tts` were here and are gone: both wrapped an external binary
+    (whisper, `say`) around a route that already existed -- an .srt through the
+    proven `captions` op, a wav on an ordinary audio track -- and Claude has a
+    shell. `eyecut.spec.OUT_OF_SCOPE` refuses them by name with that recipe.
     """
     ops = [op for op in spec.get("operations") or [] if op.get("op") in POST_OPS]
-    if not ops:
-        return []
-    store = store or project_dir.parent
     warnings: list[str] = []
-    segments = None  # resolved once, and only if a caption names a segment
+    store = store or project_dir.parent
     for i, op in enumerate(ops):
-        name = op["op"]
-        where = f"post-op[{i}] ({name})"
-        if name == "caption":
-            argv = ["capcut", "caption", str(project_dir)]
-            if op.get("audio"):
-                argv += ["--audio", str(op["audio"])]
-            if op.get("fromSegment"):
-                if segments is None:
-                    segments = _segment_ids(project_dir)
-                segment_id = segments.get(_ref_positions(spec).get(op["fromSegment"],
-                                                                  ("", -1, -1)))
-                if segment_id is None:
-                    warnings.append(f"{where} skipped: compile produced no "
-                                    f"segment for ref {op['fromSegment']!r}")
-                    continue
-                argv += ["--from-segment", segment_id]
-            for key, flag in (("whisperCmd", "--whisper-cmd"),
-                              ("whisperModel", "--whisper-model"),
-                              ("whisperEngine", "--whisper-engine"),
-                              ("language", "--language"),
-                              ("maxWords", "--max-words"),
-                              ("trackName", "--track-name")):
-                if op.get(key) is not None:
-                    argv += [flag, str(op[key])]
-            if op.get("karaoke"):
-                argv.append("--karaoke")
-            code, stderr = runner(argv, store)
-            if code != 0:
-                warnings.append(f"{where} failed: {stderr.strip()[:120]}")
-
-        elif name == "import-ass":
-            argv = ["capcut", "import-ass", str(project_dir), str(op["path"])]
-            for key, flag in (("trackName", "--track-name"),
-                              ("fontSize", "--font-size"),
-                              ("color", "--color")):
-                if op.get(key) is not None:
-                    argv += [flag, str(op[key])]
-            code, stderr = runner(argv, store)
-            if code != 0:
-                warnings.append(f"{where} failed: {stderr.strip()[:120]}")
-
-        elif name == "tts":
-            argv = ["capcut", "tts", str(project_dir)]
-            # positionals are [start] [duration]: a duration with no start
-            # would otherwise be read as the start.
-            if op.get("start") is not None:
-                argv.append(str(op["start"]))
-                if op.get("duration") is not None:
-                    argv.append(str(op["duration"]))
-            elif op.get("duration") is not None:
-                argv += ["0", str(op["duration"])]
-            argv += ["--text", op["text"], "--tts-cmd", op["ttsCmd"]]
-            for key, flag in (("volume", "--volume"),
-                              ("trackName", "--track-name")):
-                if op.get(key) is not None:
-                    argv += [flag, str(op[key])]
-            code, stderr = runner(argv, store)
-            if code != 0:
-                warnings.append(f"{where} failed: {stderr.strip()[:120]}")
-
+        where = f"post-op[{i}] ({op['op']})"
+        argv = ["capcut", "import-ass", str(project_dir), str(op["path"])]
+        for key, flag in (("trackName", "--track-name"),
+                          ("fontSize", "--font-size"),
+                          ("color", "--color")):
+            if op.get(key) is not None:
+                argv += [flag, str(op[key])]
+        code, stderr = runner(argv, store)
+        if code != 0:
+            warnings.append(f"{where} failed: {stderr.strip()[:120]}")
     return warnings
 
 

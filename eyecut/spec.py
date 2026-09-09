@@ -33,7 +33,7 @@ EASINGS = ("linear", "ease-in", "ease-out", "ease-in-out")
 COMPILE_OPS = ("transition", "filter", "effect", "keyframe", "audio-fade",
                "text-style", "text-ranges", "template", "captions")
 # post-compile ops: executed by eyecut after compile, not passed to the compiler
-POST_OPS = ("caption", "import-ass", "tts")
+POST_OPS = ("import-ass",)
 OPERATIONS = COMPILE_OPS + POST_OPS
 # these carry a `target` that must name a declared item ref
 TARGETED = ("transition", "keyframe", "audio-fade", "text-style", "text-ranges")
@@ -126,6 +126,24 @@ BROKEN_UPSTREAM = {"text-style": "capcut-cli 0.21.1 crashes on it "
                                  "Set `textStyle` on the text item instead — the same "
                                  "shadow, border and background box, applied after the "
                                  "compile with the `capcut text-style` command, which works."}
+
+#: Ops that work, and are still refused. Neither is broken: each wraps an
+#: external binary that Claude can run in its own shell, and each already has a
+#: supported route through an op that writes CapCut's format. eyecut's surface is
+#: small deliberately -- the test a feature has to pass is not "is it useful" but
+#: "can Claude do it another way" -- and a one-step convenience around `whisper`
+#: or `say` fails it, the same test that cut beat detection for being about music
+#: rather than about CapCut. Named here rather than merely absent so the refusal
+#: carries the recipe: "unknown op" would send someone looking for a typo.
+OUT_OF_SCOPE = {
+    "caption": "it wraps a whisper binary, which is not CapCut's format. Run "
+               "whisper in the shell to get an .srt, then use the `captions` op, "
+               "which is proven and does the format half.",
+    "tts": "it wraps a text-to-speech binary, which is not CapCut's format. "
+           "Synthesize the wav in the shell (`say -o out.wav "
+           "--file-format=WAVE --data-format=LEI16 \"...\"`), then place it as "
+           "an ordinary `audio` track item.",
+}
 
 
 def _items(spec: dict) -> list[tuple[dict, dict]]:
@@ -247,10 +265,7 @@ def _check_file_op(op: dict, where: str) -> None:
 # and friends); they are absent here because nothing passes them through, and
 # accepting them would be the silent no-op this module exists to prevent.
 POST_OP_KEYS = {
-    "caption": ("op", "audio", "fromSegment", "whisperCmd", "whisperModel",
-                "whisperEngine", "language", "maxWords", "trackName", "karaoke"),
     "import-ass": ("op", "path", "trackName", "fontSize", "color"),
-    "tts": ("op", "text", "ttsCmd", "start", "duration", "volume", "trackName"),
 }
 
 
@@ -261,52 +276,6 @@ def _check_post_op_keys(op: dict, where: str) -> None:
     if unknown:
         raise SpecError(f"{where}: unknown `{op['op']}` key {unknown[0]!r}. "
                         f"Supported: {', '.join(k for k in allowed if k != 'op')}")
-
-
-def _check_caption(op: dict, where: str, refs: dict[str, str]) -> None:
-    """Whisper transcription added post-compile.
-
-    `fromSegment` is a spec `ref`, not a segment id: the draft's ids do not
-    exist until compile builds them, so `apply_post_ops` resolves the ref to
-    the built segment afterwards. It must name an audio item, because that is
-    all `capcut caption --from-segment` reads.
-    """
-    _check_post_op_keys(op, where)
-    audio = op.get("audio")
-    from_seg = op.get("fromSegment")
-    if not audio and not from_seg:
-        raise SpecError(f"{where}: `caption` needs `audio` (path to an audio/video "
-                        f"file) or `fromSegment` (a segment ref to transcribe from)")
-    if audio:
-        _check_path(audio, "`audio`", where)
-    if from_seg:
-        if from_seg not in refs:
-            known = ", ".join(sorted(refs)) or "none declared"
-            raise SpecError(f"{where}: fromSegment {from_seg!r} is not a declared item "
-                            f"`ref` (known refs: {known})")
-        if refs[from_seg] != "audio":
-            raise SpecError(f"{where}: `caption` can only transcribe an audio segment, "
-                            f"but {from_seg!r} is on a {refs[from_seg]} track — "
-                            f"`capcut caption --from-segment` reads nothing else")
-
-
-def _check_tts(op: dict, where: str) -> None:
-    """Text-to-speech voiceover added post-compile."""
-    _check_post_op_keys(op, where)
-    if not isinstance(op.get("text"), str) or not op["text"]:
-        raise SpecError(f"{where}: `tts` needs `text` (the voiceover text)")
-    if not isinstance(op.get("ttsCmd"), str) or not op["ttsCmd"]:
-        raise SpecError(f"{where}: `tts` needs `ttsCmd` (command template with {{out}})")
-    if "{out}" not in op["ttsCmd"]:
-        raise SpecError(f"{where}: `ttsCmd` must contain {{out}} — the placeholder "
-                        f"where the synthesized audio file will be written")
-    for field in ("start", "duration"):
-        value = op.get(field)
-        if value is not None and not isinstance(value, (int, float)):
-            raise SpecError(f"{where}: `{field}` must be a number (seconds)")
-    volume = op.get("volume")
-    if volume is not None and not 0 <= volume <= 1:
-        raise SpecError(f"{where}: `volume` {volume} is outside 0–1")
 
 
 def _check_span(op: dict, where: str) -> None:
@@ -453,6 +422,10 @@ def validate_spec(spec: dict[str, Any]) -> None:
     for index, op in enumerate(spec.get("operations") or []):
         where = f"operations[{index}]"
         name = op.get("op") if isinstance(op, dict) else None
+        # before the unknown-op check: these are refused with a recipe, not
+        # reported as a typo.
+        if name in OUT_OF_SCOPE:
+            raise SpecError(f"{where}: `{name}` is out of scope — {OUT_OF_SCOPE[name]}")
         if name not in OPERATIONS:
             raise SpecError(f"{where}: unknown op {name!r}. "
                             f"One of: {', '.join(OPERATIONS)}")
@@ -473,7 +446,3 @@ def validate_spec(spec: dict[str, Any]) -> None:
             _check_span(op, where)
         if name == "keyframe":
             _check_keyframe(op, where)
-        if name == "caption":
-            _check_caption(op, where, refs)
-        if name == "tts":
-            _check_tts(op, where)
