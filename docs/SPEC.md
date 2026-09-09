@@ -80,7 +80,9 @@ the draft layer rejects **[proven failure]**.
 
 `write_draft` passes the spec through to `capcut compile` untouched, except for
 the parts compile has no vocabulary for (`sticker` / `sfx` tracks and `cover`,
-which it rejects outright and eyecut builds afterwards). eyecut renames nothing
+which it rejects outright and eyecut builds afterwards — plus the `caption`,
+`import-ass` and `tts` operations, which are stripped from the spec compile sees
+and executed against the built draft instead). eyecut renames nothing
 and wraps nothing, so a feature capcut-cli gains arrives here for free — the cost
 is that compile's vocabulary is the vocabulary, warts and all.
 
@@ -107,8 +109,22 @@ of a two-video-track spec lands on the base, with the overlay untouched — the
 that confirms is *placement*, which is all it ever claimed; the mask still does
 not draw.
 
-Nothing is left in the **[untested]** column: every key and track type
-capcut-cli 0.21.1 can reach has now been seen in the app, or measured out of one.
+Nothing is left in the **[untested]** column except the three post-compile
+operations below: every other key and track type capcut-cli 0.21.1 can reach has
+now been seen in the app, or measured out of one.
+
+**Post-compile operations** **[untested]** — added 2026-09-08, run against
+neither the real CLI nor the app yet. They are spec `operations`, not item keys:
+validated in `eyecut.spec`, stripped from the spec compile sees, and executed in
+`write_draft` (`apply_post_ops`) after the track ops, before media registration.
+`caption` transcribes via `capcut caption` (needs `audio`, an absolute path, or
+`fromSegment`; whisper model/engine, language, karaoke and max-words options).
+`import-ass` imports an ASS/SSA file via `capcut import-ass` (needs `path`,
+absolute; track name, font size and colour options). `tts` synthesises a
+voiceover via `capcut tts` (needs `text` plus a `ttsCmd` template containing
+`{out}`; start/duration, volume and track-name options). No draft built with any
+of the three has been opened in CapCut, so none carries a **[proven]** marker —
+that is the one place this document currently describes code nobody has watched.
 
 **Five are refused by `validate_spec`** rather than merely documented, because
 each one exits 0, lands in the file and lints clean, so nothing else in the build
@@ -178,7 +194,8 @@ one cost a real debugging session.
   *spec file*, and eyecut writes the spec into the drafts store — so
   `footage/a.mp4` resolves inside `com.lveditor.draft/` and compile reports a path
   the caller never wrote **[proven failure]**. Applies to item `path`, `captions`
-  SRTs and `template` JSON alike.
+  SRTs, `template` JSON, `import-ass` subtitle files and `caption` `audio` paths
+  alike.
 - **`audio-fade` targets an audio item.**
 - **Two tracks of one type need distinct `name`s.** compile keys a built track on
   (type, name), so unnamed tracks of the same type merge into one. A spec that
@@ -218,6 +235,14 @@ meant for the base clip lands on the overlay. Silently: the counts still agree,
 so the mismatch guard never fires, and `capcut lint` reports it clean **[proven
 failure, against the real CLI]**. Two named video tracks are how an overlay is
 built, so that was not a corner case.
+
+A second post-compile path sits beside that table and is deliberately not part
+of it: `caption`, `import-ass` and `tts` are whole-spec *operations*, not
+per-segment item keys, so `eyecut.draft.apply_post_ops` maps each one to its
+`capcut` argv directly instead of walking `eyecut.ops`. The one-table invariant
+— applicable in one place means known in the other — does not cover them; their
+shape checks live in `eyecut.spec` (`_check_caption`, `_check_tts`, and the
+`FILE_OPS` entry for `import-ass`). All three are **[untested]** (see above).
 
 ### What `write_draft` repairs after the compile
 

@@ -284,6 +284,17 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
 
     d = json.loads((P / "draft_info.json").read_text())
     fps = float(d.get("fps") or 30)
+    if width == W and height == H:
+        # No explicit size: follow the draft canvas instead of forcing 16:9.
+        # A square (or vertical) canvas rendered at 854x480 would come back
+        # pillarboxed, which misrepresents the framing under judgement.
+        canvas = d.get("canvas_config") or {}
+        cw, ch = canvas.get("width") or 0, canvas.get("height") or 0
+        if cw > 0 and ch > 0:
+            scale = min(W / cw, H / ch)
+            width = max(2, round(cw * scale) // 2 * 2)
+            height = max(2, round(ch * scale) // 2 * 2)
+            say(f"canvas {cw}x{ch} -> proxy {width}x{height}")
     name = {m["id"]: (m.get("material_name") or m.get("name", ""))
             for m in d["materials"]["videos"]}
     located = {(m.get("material_name") or m.get("name", "")): asset_path(P, m)
@@ -368,7 +379,8 @@ def render(project: str | Path, out: Path, *, tmp: Path | None = None,
     si, missing = 0, 0
     has_overlays = any(overlay_tracks)
     has_text = any(text_track_segs)
-    need_pil = bool(xform) or has_overlays or has_text
+    need_pil = (bool(xform) or has_overlays or has_text
+                or any(_get_crop(s, video_materials) for s in segs))
     if need_pil:
         try:
             from PIL import Image
