@@ -500,12 +500,15 @@ def test_a_big_file_in_the_template_does_not_land_in_every_draft(tmp_path):
 
 @capcut_cli
 def test_a_text_look_in_the_spec_reaches_the_caption_it_names(tmp_path, drafts_dir, monkeypatch):
-    """The `text-style` OPERATION crashes capcut-cli 0.21.1 ("Cannot read
-    properties of undefined (reading 'alpha')"), so eyecut refuses it. The
-    standalone `capcut text-style` command works on the same styling, so the look
-    is an item key applied after the compile, matched to the segment by position
-    the way `mask` is. The second caption is styled and the first is not, so a
-    look applied to the wrong segment fails this test.
+    """The `text-style` OPERATION is whole-spec so it cannot match styling per
+    item, and eyecut refuses it -- hence this key. Its own shapes mislead too:
+    flat keys crash compile with `Cannot read properties of undefined (reading
+    'alpha')` [proven], and `style: {"bold": true}` compiles clean and changes
+    nothing, because bold is `text-ranges` vocabulary [proven]. The standalone
+    `capcut text-style` command works on the same styling, so the look is an
+    item key applied after the compile, matched to the segment by position the
+    way `mask` is. The second caption is styled and the first is not, so a look
+    applied to the wrong segment fails this test.
     """
     monkeypatch.undo()
     source = tmp_path / "a.mp4"

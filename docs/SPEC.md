@@ -91,9 +91,9 @@ the draft layer rejects **[proven failure]**.
 
 `write_draft` passes the spec through to `capcut compile` untouched, except for
 the parts compile has no vocabulary for (`sticker` / `sfx` tracks and `cover`,
-which it rejects outright and eyecut builds afterwards — plus the `caption`,
-`import-ass` and `tts` operations, which are stripped from the spec compile sees
-and executed against the built draft instead). eyecut renames nothing
+which it rejects outright and eyecut builds afterwards — plus the `import-ass`
+operation, which is stripped from the spec compile sees and executed against
+the built draft instead). eyecut renames nothing
 and wraps nothing, so a feature capcut-cli gains arrives here for free — the cost
 is that compile's vocabulary is the vocabulary, warts and all.
 
@@ -235,8 +235,7 @@ one cost a real debugging session.
   *spec file*, and eyecut writes the spec into the drafts store — so
   `footage/a.mp4` resolves inside `com.lveditor.draft/` and compile reports a path
   the caller never wrote **[proven failure]**. Applies to item `path`, `captions`
-  SRTs, `template` JSON, `import-ass` subtitle files and `caption` `audio` paths
-  alike.
+   SRTs, `template` JSON and `import-ass` subtitle files alike.
 - **`audio-fade` targets an audio item.**
 - **Two tracks of one type need distinct `name`s.** compile keys a built track on
   (type, name), so unnamed tracks of the same type merge into one. A spec that
@@ -247,8 +246,10 @@ one cost a real debugging session.
   after** the base clip instead of layered over it, and the draft's stated duration
   no longer matches its content. Named tracks are how an overlay is built, so
   overlapping across them is allowed.
-- **The `text-style` operation is refused outright** — it crashes the compiler.
-  Set `textStyle` on the text item instead; see below.
+- **The `text-style` operation is refused outright** — styling is per text item
+  via `textStyle`, matched to its built segment after the compile, which a
+  whole-spec operation cannot do. Set `textStyle` on the text item instead;
+  see below.
 
 ### The post-compile layer
 
@@ -278,15 +279,13 @@ failure, against the real CLI]**. Two named video tracks are how an overlay is
 built, so that was not a corner case.
 
 A second post-compile path sits beside that table and is deliberately not part
-of it: `caption`, `import-ass` and `tts` are whole-spec *operations*, not
-per-segment item keys, so `eyecut.draft.apply_post_ops` maps each one to its
-`capcut` argv directly instead of walking `eyecut.ops`. The one-table invariant
-— applicable in one place means known in the other — does not cover them; their
-shape checks live in `eyecut.spec` (`_check_caption`, `_check_tts`, the
-`FILE_OPS` entry for `import-ass`, and the `POST_OP_KEYS` allow-list each of
-them is checked against, so an unmapped CLI flag fails validation instead of
-vanishing between the spec and the argv). `fromSegment` is resolved from ref to
-built segment id at apply time, the way the item ops match by position.
+of it: `import-ass` is a whole-spec *operation*, not a per-segment item key,
+so `eyecut.draft.apply_post_ops` maps it to its `capcut` argv directly instead
+of walking `eyecut.ops`. The one-table invariant — applicable in one place
+means known in the other — does not cover it; its shape checks live in
+`eyecut.spec` (the `FILE_OPS` entry and the `POST_OP_KEYS` allow-list it is
+checked against, so an unmapped CLI flag fails validation instead of vanishing
+between the spec and the argv).
 
 ### What `write_draft` repairs after the compile
 
@@ -305,7 +304,7 @@ built segment id at apply time, the way the item ops match by position.
   ```
 
 - **Text look.** compile offers a text item `fontSize` and `color` and nothing
-  else, and its `text-style` op crashes. A caption with no border or shadow is
+  else, and a whole-spec `text-style` op cannot match styling per item. A caption with no border or shadow is
   unreadable over footage of any brightness, so `textStyle` is an item key on text
   items, applied afterwards with `capcut text-style`: `shadow` / `vertical` are
   flags, `shadowColor` / `borderColor` / `bgColor` take `"#RRGGBB"`, `preset`
@@ -679,14 +678,18 @@ saying *which* of 345 effects it is, is guesswork.
 
 ## Upstream
 
-The `text-style` **operation** crashes capcut-cli 0.21.1 with `Cannot read
-properties of undefined (reading 'alpha')` on
-`{"op": "text-style", "target": ..., "bold": true}`. Only the compile path is
-broken: the standalone `capcut text-style <project> <segment>` command applies the
-same border and shadow and returns `{"ok":true,"applied":["shadow","border"]}`
-**[proven]**. So eyecut refuses the op and reaches the styling through the
-`textStyle` item key instead, applied after the compile. The refusal should be
-deleted when upstream fixes it. **Not yet reported.**
+The `text-style` **operation** is refused for shape and scope: styling is per
+text item via `textStyle`, matched to its built segment after the compile,
+which a whole-spec operation cannot do. Its own shapes mislead on top of that:
+flat keys (`{"op": "text-style", "target": ..., "bold": true}`, no `style`
+wrapper) fail compile with `Cannot read properties of undefined (reading
+'alpha')` **[proven, exit 1]**, because compile passes `operation.style`
+straight to `setTextStyle` and it arrives `undefined`; and `style: {"bold":
+true}` compiles clean (`ok: true`) and changes nothing — the material keeps
+`bold: false` **[proven]** — because bold/italic/underline are `text-ranges`
+vocabulary, which `setTextStyle` never reads. So eyecut refuses the op and
+reaches the styling through the `textStyle` item key instead, applied after the
+compile with the standalone `capcut text-style <project> <segment>` command.
 
 The better end state for `register_media` is still upstreaming: `capcut fixture
 <project> --out <dir>` on a CapCut-authored draft produces exactly the evidence

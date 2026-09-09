@@ -99,10 +99,10 @@ def test_an_unknown_operation_names_the_nine_that_exist():
         validate_spec(spec(operations=[{"op": "colour-grade", "target": "shot0"}]))
 
 
-def test_text_style_is_refused_because_it_crashes_the_compiler():
-    """Upstream bug, not ours: `{"op": "text-style", "bold": true}` dies inside
-    capcut-cli with `Cannot read properties of undefined (reading 'alpha')`. Set
-    the look on the text item (`fontSize`, `color`) until that is fixed.
+def test_text_style_is_refused_because_styling_is_per_item():
+    """`text-style` is the wrong shape: styling is per text item via `textStyle`,
+    matched to its built segment after the compile, which a whole-spec operation
+    cannot do. Set the look on the text item instead.
     """
     with pytest.raises(SpecError, match="text-style"):
         validate_spec(spec(VIDEO, TEXT, operations=[
@@ -259,8 +259,8 @@ def test_the_out_of_scope_ops_are_refused_with_the_route_that_replaces_them():
 
 
 def test_an_unmapped_post_op_key_is_refused_rather_than_dropped():
-    """The CLI takes more flags than eyecut maps (`--style-ref`, `--preset`,
-    `--time-offset`...). Accepting one would be the silent no-op this module
+    """The CLI takes more flags than eyecut maps (`--time-offset`,
+    `--style-ref`, `--highlight-words`...). Accepting one would be the silent no-op this module
     exists to prevent: the draft would build, lint clean, and open looking
     exactly like one nobody asked to change."""
     with pytest.raises(SpecError, match="unknown `import-ass` key 'timeOffset'"):
@@ -299,12 +299,15 @@ def test_a_captions_srt_must_be_absolute_too():
         validate_spec(spec(operations=[{"op": "captions", "path": "subs/cues.srt"}]))
 
 
-def test_a_text_look_is_set_on_the_item_because_the_operation_crashes():
-    """The `text-style` OPERATION crashes capcut-cli 0.21.1, but the standalone
-    `capcut text-style` command it wraps works [proven -- the same border and
-    shadow that die in compile return `{"ok":true,"applied":["shadow","border"]}`
-    when applied to a built segment]. So the look is an item key, applied after
-    the compile the way `mask` is, and the refusal message points there.
+def test_a_text_look_is_set_on_the_item_because_the_operation_cannot_match_per_item():
+    """The `text-style` OPERATION is whole-spec, so it cannot match styling to
+    each built segment the way the `textStyle` item key does -- hence the
+    refusal, and hence this key. Its own shapes mislead too: flat keys
+    (`{"op": "text-style", "bold": true}`, no `style` wrapper) crash compile
+    with `Cannot read properties of undefined (reading 'alpha')` [proven], and
+    `style: {"bold": true}` compiles clean and changes nothing -- bold is
+    `text-ranges` vocabulary [proven]. So the look is an item key, applied
+    after the compile the way `mask` is, and the refusal message points there.
     """
     validate_spec(spec(VIDEO, {"type": "text", "items": [
         {"text": "TITLE", "start": 0, "duration": 3,

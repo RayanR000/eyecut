@@ -46,12 +46,14 @@ SPANNING = ("filter", "effect")
 FILE_OPS = {"captions": "an .srt file", "template": "a saved-template .json",
             "import-ass": "an .ass/.ssa subtitle file"}
 
-# `{"op": "text-style", "bold": true}` dies inside capcut-cli 0.21.1 with
-# "Cannot read properties of undefined (reading 'alpha')". Refused here with an
-# explanation rather than passed through to crash. Only the compile OPERATION is
-# broken, so the fix is not to do without: the `textStyle` item key above applies
-# the same styling afterwards. Drop this when upstream fixes it -- the test that
-# pins it says the same.
+# `text-style` is refused for shape and scope, not because nothing works:
+# styling is per text item, and the `textStyle` item key already carries it on
+# the item it styles, matched to its built segment after the compile. A
+# whole-spec operation cannot do that per-item matching, so it would be a
+# second way to say the same thing. Its own shapes mislead on top of that:
+# flat keys crash compile, and `style: {"bold": ...}` compiles to nothing
+# (bold is `text-ranges` vocabulary). Refused here with a pointer to the item
+# key; the entry below carries the evidence.
 #: Keys that reach the draft and then come to nothing, mapped to why. Distinct
 #: from `BROKEN_UPSTREAM` below: nothing fails here. The CLI exits 0, the value
 #: lands in the file, `capcut lint` reports it clean, and the tests that assert
@@ -121,8 +123,13 @@ DISCARDED_TRACKS = {
 }
 
 #: Same class, but a top-level key rather than an item one.
-BROKEN_UPSTREAM = {"text-style": "capcut-cli 0.21.1 crashes on it "
-                                 "(\"Cannot read properties of undefined (reading 'alpha')\"). "
+BROKEN_UPSTREAM = {"text-style": "styling is per text item via `textStyle`, matched "
+                                 "to its built segment after the compile, which a whole-spec "
+                                 "operation cannot do. Flat keys (`{\"op\": \"text-style\", "
+                                 "\"bold\": true}`) crash compile with `Cannot read properties "
+                                 "of undefined (reading 'alpha')` [proven], and "
+                                 "`style: {\"bold\": true}` compiles clean and changes nothing "
+                                 "— bold is `text-ranges` vocabulary, not `text-style` [proven]. "
                                  "Set `textStyle` on the text item instead — the same "
                                  "shadow, border and background box, applied after the "
                                  "compile with the `capcut text-style` command, which works."}
@@ -261,8 +268,9 @@ def _check_file_op(op: dict, where: str) -> None:
 # behind each op reports a bad value by exiting non-zero *after* the draft
 # exists, and an unmapped key would not even get that far -- the draft would
 # open looking exactly like one nobody asked to change. The CLI takes more
-# flags than these (`caption` alone has --style-ref/--preset/--highlight-words
-# and friends); they are absent here because nothing passes them through, and
+# flags than these (`capcut import-ass` shares `import-srt`'s flags:
+# --time-offset/--style-ref/--highlight-words and friends); they are absent
+# here because nothing passes them through, and
 # accepting them would be the silent no-op this module exists to prevent.
 POST_OP_KEYS = {
     "import-ass": ("op", "path", "trackName", "fontSize", "color"),

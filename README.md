@@ -105,7 +105,7 @@ one table in `eyecut/ops.py`. The long-standing three (there were four; `mask`
 was the fourth until it was exported and measured):
 **animation** (`anim` on a video or text item — an intro, outro or combo from
 CapCut's 318 catalogue slugs, applied with `capcut text-anim` on a caption and
-`capcut image-anim` on a clip; without it every cut is a hard cut), **text look** (compile's `text-style` op crashes, and `fontSize`/`color` cannot
+`capcut image-anim` on a clip; without it every cut is a hard cut), **text look** (a whole-spec `text-style` op cannot match styling per item, and `fontSize`/`color` cannot
 give a caption the border or shadow that makes it readable over footage — so
 `textStyle` is an item key applied afterwards with `capcut text-style`, the
 standalone command that works), **speed** (compile writes `segment.speed` but
@@ -174,7 +174,7 @@ mis-builds. Each rule below is a mistake that cost a real debugging session:
 | A whole-frame zoom is `uniform_scale` | `scale` is not one of the 11 property names |
 | Easings are hyphenated: `ease-in-out` | `ease_in_out` is rejected, but only after the draft directory exists |
 | `audio-fade` targets an audio item | Same: a failed build that leaves an orphan folder |
-| The `text-style` op is refused outright | It crashes capcut-cli 0.21.1: `Cannot read properties of undefined (reading 'alpha')`. Set `textStyle` on the text item instead — the standalone command it wraps works |
+| The `text-style` op is refused outright | Styling is per text item via `textStyle`, matched to its built segment after the compile, which a whole-spec operation cannot do. Set `textStyle` on the text item instead — the standalone command it wraps works |
 | `filter`/`effect` need `start`, `duration` and `slug`, and take no `target` | A missing duration writes `target_timerange.duration: null`, which nulls the whole draft's duration and breaks reading it back |
 | `intensity` is 0–1 | Written verbatim: `5.0` lands in the draft as five times what the CapCut UI can express |
 | Template text does not resize to fit | The template keeps the font size it was designed at; a much longer line runs off both edges of the frame |

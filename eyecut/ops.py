@@ -48,9 +48,10 @@ MASK_OPTIONS = {"centerX": "--center-x", "centerY": "--center-y", "size": "--siz
 MASK_FLAGS = ("invert",)
 
 # `capcut text-style`. The standalone command is the whole reason `textStyle` is
-# an item key: the compile OPERATION of the same name crashes (see
-# BROKEN_UPSTREAM in eyecut.spec), while the command it wraps applies the
-# identical border and shadow to a built segment [proven against 0.21.1].
+# an item key: styling is per text item, matched to its built segment after the
+# compile (see BROKEN_UPSTREAM in eyecut.spec), which a whole-spec operation
+# cannot do. The command applies the identical border and shadow to a built
+# segment [proven against 0.21.1].
 TEXT_STYLE_OPTIONS = {
     "alpha": "--alpha", "fixedWidth": "--fixed-width", "fixedHeight": "--fixed-height",
     "shadowAlpha": "--shadow-alpha", "shadowAngle": "--shadow-angle",

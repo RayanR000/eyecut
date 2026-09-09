@@ -383,12 +383,11 @@ def apply_text_styles(spec: dict, project_dir: Path, *, runner=_capcut_runner,
                       store: Path | None = None) -> list[str]:
     """Apply each text item's `textStyle` to the caption compile made for it.
 
-    The `text-style` OPERATION crashes capcut-cli 0.21.1 outright ("Cannot read
-    properties of undefined (reading 'alpha')") and `eyecut.spec` refuses it. The
-    standalone `capcut text-style` command it wraps is fine on the same styling
-    [proven -- a border and shadow that kill compile return
-    `{"ok":true,"applied":["shadow","border"]}` here], so the look is applied
-    afterwards, the way `mask` and speed are.
+    The `text-style` OPERATION is the wrong shape -- styling is per text item,
+    matched here to its built segment, which a whole-spec operation cannot do --
+    and `eyecut.spec` refuses it (see BROKEN_UPSTREAM). So the look is applied
+    afterwards with the standalone `capcut text-style` command, the way `mask`
+    and speed are.
 
     This is not cosmetic: a caption with no border or shadow is unreadable over
     footage of any brightness, and `fontSize`/`color` on the item -- all compile
