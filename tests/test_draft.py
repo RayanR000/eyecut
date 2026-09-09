@@ -970,6 +970,25 @@ def test_an_import_ass_maps_its_options_onto_the_cli(tmp_path):
     assert calls[0][calls[0].index("--font-size") + 1] == "20"
 
 
+def test_an_import_ass_shifts_its_cues_through_the_cli(tmp_path):
+    """`--time-offset` is the flag an `.ass` cut against a different edit needs,
+    and 0 has to reach the CLI as readily as 1.5 -- a falsy-check here would drop
+    the one value that says "explicitly unshifted"."""
+    calls = []
+    apply_post_ops(
+        {"operations": [{"op": "import-ass", "path": "/s/a.ass", "timeOffset": 0}]},
+        tmp_path, runner=lambda argv, cwd: (calls.append(argv) or (0, "")),
+        store=tmp_path)
+    assert calls[0][calls[0].index("--time-offset") + 1] == "0"
+
+    calls.clear()
+    apply_post_ops(
+        {"operations": [{"op": "import-ass", "path": "/s/a.ass", "timeOffset": -0.25}]},
+        tmp_path, runner=lambda argv, cwd: (calls.append(argv) or (0, "")),
+        store=tmp_path)
+    assert calls[0][calls[0].index("--time-offset") + 1] == "-0.25"
+
+
 def test_a_failing_post_op_warns_and_keeps_the_draft(tmp_path):
     """Same rule as the item ops: the draft is already written and worth
     keeping, and silence is what would not be."""

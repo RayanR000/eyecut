@@ -473,7 +473,8 @@ def apply_post_ops(spec: dict, project_dir: Path, *, runner=_capcut_runner,
         argv = ["capcut", "import-ass", str(project_dir), str(op["path"])]
         for key, flag in (("trackName", "--track-name"),
                           ("fontSize", "--font-size"),
-                          ("color", "--color")):
+                          ("color", "--color"),
+                          ("timeOffset", "--time-offset")):
             if op.get(key) is not None:
                 argv += [flag, str(op[key])]
         code, stderr = runner(argv, store)

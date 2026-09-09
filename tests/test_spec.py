@@ -259,13 +259,33 @@ def test_the_out_of_scope_ops_are_refused_with_the_route_that_replaces_them():
 
 
 def test_an_unmapped_post_op_key_is_refused_rather_than_dropped():
-    """The CLI takes more flags than eyecut maps (`--time-offset`,
-    `--style-ref`, `--highlight-words`...). Accepting one would be the silent no-op this module
+    """The CLI takes more flags than eyecut maps (`--style-ref`,
+    `--highlight-words`...). Accepting one would be the silent no-op this module
     exists to prevent: the draft would build, lint clean, and open looking
     exactly like one nobody asked to change."""
-    with pytest.raises(SpecError, match="unknown `import-ass` key 'timeOffset'"):
+    with pytest.raises(SpecError, match="unknown `import-ass` key 'styleRef'"):
         validate_spec(spec(operations=[
-            {"op": "import-ass", "path": "/s/a.ass", "timeOffset": 1}]))
+            {"op": "import-ass", "path": "/s/a.ass", "styleRef": "seg-1"}]))
+
+
+def test_an_import_ass_can_shift_its_cues():
+    """`timeOffset` is mapped, because an `.ass` exported against a different
+    cut lands every cue at the wrong place and re-exporting the subtitle file is
+    the long way round. Seconds, the way every other time in a spec is, and
+    negative to pull cues earlier."""
+    validate_spec(spec(operations=[
+        {"op": "import-ass", "path": "/s/a.ass", "timeOffset": 1.5}]))
+    validate_spec(spec(operations=[
+        {"op": "import-ass", "path": "/s/a.ass", "timeOffset": -0.25}]))
+
+
+def test_a_cue_shift_that_is_not_a_number_is_refused():
+    """`capcut import-ass` reports a bad `--time-offset` by exiting non-zero
+    *after* the draft exists, which is a build that reports failure over a draft
+    it already wrote. Cheaper to refuse the spec."""
+    with pytest.raises(SpecError, match="timeOffset.*seconds"):
+        validate_spec(spec(operations=[
+            {"op": "import-ass", "path": "/s/a.ass", "timeOffset": "1.5s"}]))
 
 
 def test_a_relative_media_path_is_refused_because_the_spec_moves():

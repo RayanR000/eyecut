@@ -269,11 +269,11 @@ def _check_file_op(op: dict, where: str) -> None:
 # exists, and an unmapped key would not even get that far -- the draft would
 # open looking exactly like one nobody asked to change. The CLI takes more
 # flags than these (`capcut import-ass` shares `import-srt`'s flags:
-# --time-offset/--style-ref/--highlight-words and friends); they are absent
-# here because nothing passes them through, and
-# accepting them would be the silent no-op this module exists to prevent.
+# --style-ref/--highlight-words and friends); they are absent here because
+# nothing passes them through, and accepting them would be the silent no-op
+# this module exists to prevent.
 POST_OP_KEYS = {
-    "import-ass": ("op", "path", "trackName", "fontSize", "color"),
+    "import-ass": ("op", "path", "trackName", "fontSize", "color", "timeOffset"),
 }
 
 
@@ -284,6 +284,13 @@ def _check_post_op_keys(op: dict, where: str) -> None:
     if unknown:
         raise SpecError(f"{where}: unknown `{op['op']}` key {unknown[0]!r}. "
                         f"Supported: {', '.join(k for k in allowed if k != 'op')}")
+    # a mapped key can still carry a value the CLI rejects, and it rejects it by
+    # exiting non-zero after the draft exists. Negative is meaningful: it pulls
+    # every cue earlier, which is what an .ass cut against a longer intro needs.
+    if "timeOffset" in op and (isinstance(op["timeOffset"], bool)
+                               or not isinstance(op["timeOffset"], (int, float))):
+        raise SpecError(f"{where}: `timeOffset` is seconds (a number), "
+                        f"got {op['timeOffset']!r}")
 
 
 def _check_span(op: dict, where: str) -> None:
